@@ -43,6 +43,7 @@ public class TestQueryManagerConfig
                 .setRemoteTaskMaxCallbackThreads(1000)
                 .setQueryExecutionPolicy("all-at-once")
                 .setQueryMaxRunTime(new Duration(100, TimeUnit.DAYS))
+                .setQueryMaxExecutionTime(new Duration(100, TimeUnit.DAYS))
                 .setQueryMaxCpuTime(new Duration(1_000_000_000, TimeUnit.DAYS))
         );
     }
@@ -67,6 +68,7 @@ public class TestQueryManagerConfig
                 .put("query.remote-task.max-callback-threads", "10")
                 .put("query.execution-policy", "phased")
                 .put("query.max-run-time", "2h")
+                .put("query.max-execution-time", "3h")
                 .put("query.max-cpu-time", "2d")
                 .build();
 
@@ -87,6 +89,7 @@ public class TestQueryManagerConfig
                 .setRemoteTaskMaxCallbackThreads(10)
                 .setQueryExecutionPolicy("phased")
                 .setQueryMaxRunTime(new Duration(2, TimeUnit.HOURS))
+                .setQueryMaxExecutionTime(new Duration(3, TimeUnit.HOURS))
                 .setQueryMaxCpuTime(new Duration(2, TimeUnit.DAYS));
 
         ConfigAssertions.assertFullMapping(properties, expected);
