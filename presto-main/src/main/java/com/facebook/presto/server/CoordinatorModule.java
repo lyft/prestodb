@@ -151,6 +151,7 @@ public class CoordinatorModule
     protected void setup(Binder binder)
     {
         httpServerBinder(binder).bindResource("/", "webapp").withWelcomeFile("index.html");
+        httpServerBinder(binder).bindResource("/healthcheck", "webapp").withWelcomeFile("index.html");
 
         // presto coordinator announcement
         discoveryBinder(binder).bindHttpAnnouncement("presto-coordinator");
