@@ -24,9 +24,7 @@ import com.facebook.presto.spi.type.IntegerType;
 import com.facebook.presto.spi.type.RealType;
 import com.facebook.presto.spi.type.TimestampType;
 import com.facebook.presto.spi.type.Type;
-import com.facebook.presto.spi.type.VarcharType;
-import org.apache.hadoop.hive.serde2.typeinfo.VarcharTypeInfo;
-import static com.facebook.presto.spi.type.VarcharType.createVarcharType;
+import org.apache.hadoop.hive.serde2.typeinfo.PrimitiveTypeInfo;
 
 import parquet.column.ColumnDescriptor;
 import parquet.column.Encoding;
@@ -107,7 +105,7 @@ public final class ParquetTypeUtils
             case BOOLEAN:
                 return BooleanType.BOOLEAN;
             case BINARY:
-                return createDecimalType(descriptor).orElse(extractVarcharType(descriptor.getHiveType()));
+                return createDecimalType(descriptor).orElse(createVarcharType(descriptor.getHiveType().orElse(HiveType.HIVE_VARCHAR)));
             case FLOAT:
                 return RealType.REAL;
             case DOUBLE:
@@ -201,12 +199,8 @@ public final class ParquetTypeUtils
         return Optional.of(DecimalType.createDecimalType(decimalMetadata.getPrecision(), decimalMetadata.getScale()));
     }
 
-    private static Type extractVarcharType(Optional<HiveType> hiveType)
+    private static Type createVarcharType(HiveType hiveType)
     {
-        int length = VarcharType.UNBOUNDED_LENGTH;
-        if (hiveType.isPresent()) {
-            length = ((VarcharTypeInfo) hiveType.get().getTypeInfo()).getLength();
-        }
-        return createVarcharType(length);
+        return HiveType.getPrimitiveType((PrimitiveTypeInfo) hiveType.getTypeInfo());
     }
 }
