@@ -162,8 +162,8 @@ public class ParquetPageSourceFactory
                     .map(column -> getParquetType(column, fileSchema, useParquetColumnNames))
                     .filter(Objects::nonNull)
                     .collect(toList());
-            Map<Integer, HiveType> columnTypes = columns.stream().collect(
-                    Collectors.toMap(HiveColumnHandle::getHiveColumnIndex, HiveColumnHandle::getHiveType));
+            Map<Integer, HiveType> columnTypes = columns.stream()
+                    .collect(Collectors.toMap(HiveColumnHandle::getHiveColumnIndex, HiveColumnHandle::getHiveType));
 
             MessageType requestedSchema = new MessageType(fileSchema.getName(), fields);
 
