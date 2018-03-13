@@ -15,6 +15,7 @@ package com.facebook.presto.hive.parquet;
 
 import com.facebook.presto.hive.HdfsEnvironment;
 import com.facebook.presto.hive.HiveColumnHandle;
+import com.facebook.presto.hive.HiveType;
 import com.facebook.presto.hive.parquet.predicate.ParquetPredicate;
 import com.facebook.presto.hive.util.DecimalUtils;
 import com.facebook.presto.spi.PrestoException;
@@ -64,6 +65,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.stream.Collectors;
 
 import static com.facebook.presto.hive.HiveColumnHandle.ColumnType.REGULAR;
 import static com.facebook.presto.hive.HiveErrorCode.HIVE_CANNOT_OPEN_SPLIT;
@@ -337,6 +339,8 @@ public class ParquetHiveRecordCursor
                     .map(column -> getParquetType(column, fileSchema, useParquetColumnNames))
                     .filter(Objects::nonNull)
                     .collect(toList());
+            Map<Integer, HiveType> columnTypes = columns.stream()
+                    .collect(Collectors.toMap(HiveColumnHandle::getHiveColumnIndex, HiveColumnHandle::getHiveType));
 
             MessageType requestedSchema = new MessageType(fileSchema.getName(), fields);
 
@@ -346,7 +350,7 @@ public class ParquetHiveRecordCursor
                 if (firstDataPage >= start && firstDataPage < start + length) {
                     if (predicatePushdownEnabled) {
                         TupleDomain<ColumnDescriptor> parquetTupleDomain = getParquetTupleDomain(fileSchema, requestedSchema, effectivePredicate);
-                        ParquetPredicate parquetPredicate = buildParquetPredicate(requestedSchema, parquetTupleDomain, fileSchema);
+                        ParquetPredicate parquetPredicate = buildParquetPredicate(requestedSchema, parquetTupleDomain, fileSchema, columnTypes);
                         if (predicateMatches(parquetPredicate, block, dataSource, fileSchema, requestedSchema, parquetTupleDomain)) {
                             offsets.add(block.getStartingPos());
                         }

@@ -17,6 +17,7 @@ import com.facebook.presto.hive.HdfsEnvironment;
 import com.facebook.presto.hive.HiveClientConfig;
 import com.facebook.presto.hive.HiveColumnHandle;
 import com.facebook.presto.hive.HivePageSourceFactory;
+import com.facebook.presto.hive.HiveType;
 import com.facebook.presto.hive.parquet.predicate.ParquetPredicate;
 import com.facebook.presto.hive.parquet.reader.ParquetMetadataReader;
 import com.facebook.presto.hive.parquet.reader.ParquetReader;
@@ -44,10 +45,12 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static com.facebook.presto.hive.HiveColumnHandle.ColumnType.REGULAR;
 import static com.facebook.presto.hive.HiveErrorCode.HIVE_CANNOT_OPEN_SPLIT;
@@ -159,6 +162,8 @@ public class ParquetPageSourceFactory
                     .map(column -> getParquetType(column, fileSchema, useParquetColumnNames))
                     .filter(Objects::nonNull)
                     .collect(toList());
+            Map<Integer, HiveType> columnTypes = columns.stream()
+                    .collect(Collectors.toMap(HiveColumnHandle::getHiveColumnIndex, HiveColumnHandle::getHiveType));
 
             MessageType requestedSchema = new MessageType(fileSchema.getName(), fields);
 
@@ -172,7 +177,7 @@ public class ParquetPageSourceFactory
 
             if (predicatePushdownEnabled) {
                 TupleDomain<ColumnDescriptor> parquetTupleDomain = getParquetTupleDomain(fileSchema, requestedSchema, effectivePredicate);
-                ParquetPredicate parquetPredicate = buildParquetPredicate(requestedSchema, parquetTupleDomain, fileMetaData.getSchema());
+                ParquetPredicate parquetPredicate = buildParquetPredicate(requestedSchema, parquetTupleDomain, fileMetaData.getSchema(), columnTypes);
                 final ParquetDataSource finalDataSource = dataSource;
                 blocks = blocks.stream()
                         .filter(block -> predicateMatches(parquetPredicate, block, finalDataSource, fileSchema, requestedSchema, parquetTupleDomain))
