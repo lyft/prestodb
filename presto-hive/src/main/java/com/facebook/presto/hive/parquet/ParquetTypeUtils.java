@@ -14,6 +14,7 @@
 package com.facebook.presto.hive.parquet;
 
 import com.facebook.presto.hive.HiveColumnHandle;
+import com.facebook.presto.hive.HiveType;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.type.BigintType;
 import com.facebook.presto.spi.type.BooleanType;
@@ -24,6 +25,7 @@ import com.facebook.presto.spi.type.RealType;
 import com.facebook.presto.spi.type.TimestampType;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.spi.type.VarcharType;
+import org.apache.hadoop.hive.serde2.typeinfo.BaseCharTypeInfo;
 import parquet.column.ColumnDescriptor;
 import parquet.column.Encoding;
 import parquet.io.ColumnIO;
@@ -35,6 +37,7 @@ import parquet.schema.DecimalMetadata;
 import parquet.schema.MessageType;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
@@ -53,21 +56,21 @@ public final class ParquetTypeUtils
         return (new ColumnIOFactory()).getColumnIO(requestedSchema, fileSchema, true).getLeaves();
     }
 
-    public static Optional<RichColumnDescriptor> getDescriptor(MessageType fileSchema, MessageType requestedSchema, List<String> path)
+    public static Optional<RichColumnDescriptor> getDescriptor(MessageType fileSchema, MessageType requestedSchema, List<String> path, Map<Integer, HiveType> hiveColumnTypes)
     {
         checkArgument(path.size() >= 1, "Parquet nested path should have at least one component");
         int index = getPathIndex(fileSchema, requestedSchema, path);
-        return getDescriptor(fileSchema, requestedSchema, index);
+        return getDescriptor(fileSchema, requestedSchema, index, Optional.ofNullable(hiveColumnTypes.get(index)));
     }
 
-    public static Optional<RichColumnDescriptor> getDescriptor(MessageType fileSchema, MessageType requestedSchema, int index)
+    public static Optional<RichColumnDescriptor> getDescriptor(MessageType fileSchema, MessageType requestedSchema, int index, Optional<HiveType> columnType)
     {
         if (index == -1) {
             return empty();
         }
         PrimitiveColumnIO columnIO = getColumns(fileSchema, requestedSchema).get(index);
         ColumnDescriptor descriptor = columnIO.getColumnDescriptor();
-        return Optional.of(new RichColumnDescriptor(descriptor.getPath(), columnIO.getType().asPrimitiveType(), descriptor.getMaxRepetitionLevel(), descriptor.getMaxDefinitionLevel()));
+        return Optional.of(new RichColumnDescriptor(descriptor.getPath(), columnIO.getType().asPrimitiveType(), columnType, descriptor.getMaxRepetitionLevel(), descriptor.getMaxDefinitionLevel()));
     }
 
     private static int getPathIndex(MessageType fileSchema, MessageType requestedSchema, List<String> path)
@@ -102,7 +105,7 @@ public final class ParquetTypeUtils
             case BOOLEAN:
                 return BooleanType.BOOLEAN;
             case BINARY:
-                return createDecimalType(descriptor).orElse(VarcharType.VARCHAR);
+                return createDecimalType(descriptor).orElse(createVarcharType(descriptor));
             case FLOAT:
                 return RealType.REAL;
             case DOUBLE:
@@ -194,5 +197,15 @@ public final class ParquetTypeUtils
         }
         DecimalMetadata decimalMetadata = descriptor.getPrimitiveType().getDecimalMetadata();
         return Optional.of(DecimalType.createDecimalType(decimalMetadata.getPrecision(), decimalMetadata.getScale()));
+    }
+
+    private static Type createVarcharType(RichColumnDescriptor descriptor)
+    {
+        Optional<HiveType> hiveType = descriptor.getHiveType();
+        int length = VarcharType.UNBOUNDED_LENGTH;
+        if (hiveType.isPresent()) {
+            length = ((BaseCharTypeInfo) hiveType.get().getTypeInfo()).getLength();
+        }
+        return VarcharType.createVarcharType(length);
     }
 }
