@@ -22,7 +22,6 @@ import com.facebook.presto.spi.predicate.TupleDomain;
 import com.facebook.presto.spi.predicate.ValueSet;
 import com.facebook.presto.spi.type.Type;
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
@@ -40,9 +39,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 
-import static com.facebook.presto.hive.parquet.ParquetTypeUtils.getPrestoType;
 import static com.facebook.presto.hive.parquet.predicate.ParquetPredicateUtils.isStatisticsOverflow;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
@@ -59,12 +58,14 @@ public class TupleDomainParquetPredicate
         implements ParquetPredicate
 {
     private final TupleDomain<ColumnDescriptor> effectivePredicate;
-    private final List<RichColumnDescriptor> columns;
+    private final Set<RichColumnDescriptor> columns;
+    private final Map<RichColumnDescriptor, Type> prestoTypes;
 
-    public TupleDomainParquetPredicate(TupleDomain<ColumnDescriptor> effectivePredicate, List<RichColumnDescriptor> columns)
+    public TupleDomainParquetPredicate(TupleDomain<ColumnDescriptor> effectivePredicate, Map<RichColumnDescriptor, Type> prestoTypes)
     {
         this.effectivePredicate = requireNonNull(effectivePredicate, "effectivePredicate is null");
-        this.columns = ImmutableList.copyOf(requireNonNull(columns, "columns is null"));
+        this.columns = prestoTypes.keySet();
+        this.prestoTypes = prestoTypes;
     }
 
     @Override
@@ -79,7 +80,7 @@ public class TupleDomainParquetPredicate
             Statistics<?> columnStatistics = statistics.get(column);
 
             Domain domain;
-            Type type = getPrestoType(column);
+            Type type = prestoTypes.get(column);
             if (columnStatistics == null || columnStatistics.isEmpty()) {
                 // no stats for column
                 domain = Domain.all(type);
@@ -101,7 +102,7 @@ public class TupleDomainParquetPredicate
 
         for (RichColumnDescriptor column : columns) {
             ParquetDictionaryDescriptor dictionaryDescriptor = dictionaries.get(column);
-            Domain domain = getDomain(getPrestoType(column), dictionaryDescriptor);
+            Domain domain = getDomain(prestoTypes.get(column), dictionaryDescriptor);
             if (domain != null) {
                 domains.put(column, domain);
             }

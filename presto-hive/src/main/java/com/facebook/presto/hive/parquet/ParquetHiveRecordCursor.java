@@ -350,7 +350,7 @@ public class ParquetHiveRecordCursor
                 if (firstDataPage >= start && firstDataPage < start + length) {
                     if (predicatePushdownEnabled) {
                         TupleDomain<ColumnDescriptor> parquetTupleDomain = getParquetTupleDomain(fileSchema, requestedSchema, effectivePredicate);
-                        ParquetPredicate parquetPredicate = buildParquetPredicate(requestedSchema, parquetTupleDomain, fileSchema, columnTypes);
+                        ParquetPredicate parquetPredicate = buildParquetPredicate(requestedSchema, parquetTupleDomain, fileSchema, (descriptor, index) -> types[index]);
                         if (predicateMatches(parquetPredicate, block, dataSource, fileSchema, requestedSchema, parquetTupleDomain)) {
                             offsets.add(block.getStartingPos());
                         }

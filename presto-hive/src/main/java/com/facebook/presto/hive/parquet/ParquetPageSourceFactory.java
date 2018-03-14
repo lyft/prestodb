@@ -60,6 +60,7 @@ import static com.facebook.presto.hive.HiveSessionProperties.isParquetPredicateP
 import static com.facebook.presto.hive.HiveUtil.getDeserializerClassName;
 import static com.facebook.presto.hive.parquet.HdfsParquetDataSource.buildHdfsParquetDataSource;
 import static com.facebook.presto.hive.parquet.ParquetTypeUtils.getParquetType;
+import static com.facebook.presto.hive.parquet.ParquetTypeUtils.getPrestoType;
 import static com.facebook.presto.hive.parquet.predicate.ParquetPredicateUtils.buildParquetPredicate;
 import static com.facebook.presto.hive.parquet.predicate.ParquetPredicateUtils.getParquetTupleDomain;
 import static com.facebook.presto.hive.parquet.predicate.ParquetPredicateUtils.predicateMatches;
@@ -177,7 +178,7 @@ public class ParquetPageSourceFactory
 
             if (predicatePushdownEnabled) {
                 TupleDomain<ColumnDescriptor> parquetTupleDomain = getParquetTupleDomain(fileSchema, requestedSchema, effectivePredicate);
-                ParquetPredicate parquetPredicate = buildParquetPredicate(requestedSchema, parquetTupleDomain, fileMetaData.getSchema(), columnTypes);
+                ParquetPredicate parquetPredicate = buildParquetPredicate(requestedSchema, parquetTupleDomain, fileMetaData.getSchema(), (descriptor, columnIndex) -> getPrestoType(descriptor, columnTypes.get(columnIndex), typeManager));
                 final ParquetDataSource finalDataSource = dataSource;
                 blocks = blocks.stream()
                         .filter(block -> predicateMatches(parquetPredicate, block, finalDataSource, fileSchema, requestedSchema, parquetTupleDomain))

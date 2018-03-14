@@ -14,7 +14,6 @@
 package com.facebook.presto.hive.parquet.predicate;
 
 import com.facebook.presto.hive.HiveColumnHandle;
-import com.facebook.presto.hive.HiveType;
 import com.facebook.presto.hive.parquet.ParquetDataSource;
 import com.facebook.presto.hive.parquet.ParquetDictionaryPage;
 import com.facebook.presto.hive.parquet.ParquetEncoding;
@@ -43,10 +42,12 @@ import parquet.schema.MessageType;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.util.Arrays;
-import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.BiFunction;
 
 import static com.facebook.presto.hive.parquet.ParquetCompressionUtils.decompress;
 import static com.facebook.presto.hive.parquet.ParquetTypeUtils.getDescriptor;
@@ -85,7 +86,7 @@ public final class ParquetPredicateUtils
 
         ImmutableMap.Builder<ColumnDescriptor, Domain> predicate = ImmutableMap.builder();
         for (Entry<HiveColumnHandle, Domain> entry : effectivePredicate.getDomains().get().entrySet()) {
-            Optional<RichColumnDescriptor> descriptor = getDescriptor(fileSchema, requestedSchema, ImmutableList.of(entry.getKey().getName()), Collections.emptyMap());
+            Optional<RichColumnDescriptor> descriptor = getDescriptor(fileSchema, requestedSchema, ImmutableList.of(entry.getKey().getName()));
             if (descriptor.isPresent()) {
                 predicate.put(descriptor.get(), entry.getValue());
             }
@@ -93,16 +94,19 @@ public final class ParquetPredicateUtils
         return TupleDomain.withColumnDomains(predicate.build());
     }
 
-    public static ParquetPredicate buildParquetPredicate(MessageType requestedSchema, TupleDomain<ColumnDescriptor> parquetTupleDomain, MessageType fileSchema, Map<Integer, HiveType> hiveColumnTypes)
+    public static ParquetPredicate buildParquetPredicate(MessageType requestedSchema, TupleDomain<ColumnDescriptor> parquetTupleDomain, MessageType fileSchema, BiFunction<RichColumnDescriptor, Integer, Type> prestoTypeProvider)
     {
         ImmutableList.Builder<RichColumnDescriptor> columnReferences = ImmutableList.builder();
-        for (String[] paths : requestedSchema.getPaths()) {
-            Optional<RichColumnDescriptor> descriptor = getDescriptor(fileSchema, requestedSchema, Arrays.asList(paths), hiveColumnTypes);
+        List<String[]> pathsList = requestedSchema.getPaths();
+        Map<RichColumnDescriptor, Type> prestoTypes = new HashMap<>();
+        for (int index = 0; index < pathsList.size(); index++) {
+            Optional<RichColumnDescriptor> descriptor = getDescriptor(fileSchema, requestedSchema, Arrays.asList(pathsList.get(index)));
             if (descriptor.isPresent()) {
                 columnReferences.add(descriptor.get());
+                prestoTypes.put(descriptor.get(), prestoTypeProvider.apply(descriptor.get(), index));
             }
         }
-        return new TupleDomainParquetPredicate(parquetTupleDomain, columnReferences.build());
+        return new TupleDomainParquetPredicate(parquetTupleDomain, prestoTypes);
     }
 
     public static boolean predicateMatches(ParquetPredicate parquetPredicate, BlockMetaData block, ParquetDataSource dataSource, MessageType fileSchema, MessageType requestedSchema, TupleDomain<ColumnDescriptor> parquetTupleDomain)
@@ -122,7 +126,7 @@ public final class ParquetPredicateUtils
         for (ColumnChunkMetaData columnMetaData : blockMetadata.getColumns()) {
             Statistics<?> columnStatistics = columnMetaData.getStatistics();
             if (columnStatistics != null) {
-                Optional<RichColumnDescriptor> descriptor = getDescriptor(fileSchema, requestedSchema, Arrays.asList(columnMetaData.getPath().toArray()), Collections.emptyMap());
+                Optional<RichColumnDescriptor> descriptor = getDescriptor(fileSchema, requestedSchema, Arrays.asList(columnMetaData.getPath().toArray()));
                 if (descriptor.isPresent()) {
                     statistics.put(descriptor.get(), columnStatistics);
                 }
@@ -135,7 +139,7 @@ public final class ParquetPredicateUtils
     {
         ImmutableMap.Builder<ColumnDescriptor, ParquetDictionaryDescriptor> dictionaries = ImmutableMap.builder();
         for (ColumnChunkMetaData columnMetaData : blockMetadata.getColumns()) {
-            Optional<RichColumnDescriptor> descriptor = getDescriptor(fileSchema, requestedSchema, Arrays.asList(columnMetaData.getPath().toArray()), Collections.emptyMap());
+            Optional<RichColumnDescriptor> descriptor = getDescriptor(fileSchema, requestedSchema, Arrays.asList(columnMetaData.getPath().toArray()));
             if (descriptor.isPresent()) {
                 ColumnDescriptor columnDescriptor = descriptor.get();
                 if (isOnlyDictionaryEncodingPages(columnMetaData.getEncodings()) && isColumnPredicate(columnDescriptor, parquetTupleDomain)) {

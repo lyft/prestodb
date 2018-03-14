@@ -14,7 +14,6 @@
 package com.facebook.presto.hive.parquet;
 
 import com.facebook.presto.hive.HiveColumnHandle;
-import com.facebook.presto.hive.HiveType;
 import com.facebook.presto.hive.parquet.reader.ParquetReader;
 import com.facebook.presto.memory.context.AggregatedMemoryContext;
 import com.facebook.presto.spi.ConnectorPageSource;
@@ -35,7 +34,6 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
 
@@ -66,7 +64,6 @@ public class ParquetPageSource
 
     private final Block[] constantBlocks;
     private final int[] hiveColumnIndexes;
-    private Map<Integer, HiveType> hiveColumnTypes;
 
     private int batchId;
     private boolean closed;
@@ -114,7 +111,6 @@ public class ParquetPageSource
             typesBuilder.add(type);
 
             hiveColumnIndexes[columnIndex] = column.getHiveColumnIndex();
-            hiveColumnTypes.put(columnIndex, column.getHiveType());
             if (getParquetType(column, fileSchema, useParquetColumnNames) == null) {
                 constantBlocks[columnIndex] = RunLengthEncodedBlock.create(type, null, MAX_VECTOR_LENGTH);
             }
@@ -197,7 +193,7 @@ public class ParquetPageSource
                         blocks[fieldId] = parquetReader.readArray(type, path);
                     }
                     else {
-                        Optional<RichColumnDescriptor> descriptor = getDescriptor(fileSchema, requestedSchema, path, hiveColumnTypes);
+                        Optional<RichColumnDescriptor> descriptor = getDescriptor(fileSchema, requestedSchema, path);
                         if (descriptor.isPresent()) {
                             blocks[fieldId] = new LazyBlock(batchSize, new ParquetBlockLoader(descriptor.get(), type));
                         }

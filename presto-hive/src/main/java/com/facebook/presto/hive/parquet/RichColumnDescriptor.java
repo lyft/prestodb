@@ -13,38 +13,27 @@
  */
 package com.facebook.presto.hive.parquet;
 
-import com.facebook.presto.hive.HiveType;
 import parquet.column.ColumnDescriptor;
 import parquet.schema.PrimitiveType;
-
-import java.util.Optional;
 
 // extension of parquet's ColumnDescriptor. Exposes full Primitive type information
 public class RichColumnDescriptor
         extends ColumnDescriptor
 {
     private final PrimitiveType primitiveType;
-    private final Optional<HiveType> hiveType;
 
     public RichColumnDescriptor(
             String[] path,
             PrimitiveType primitiveType,
-            Optional<HiveType> columnType,
             int maxRep,
             int maxDef)
     {
         super(path, primitiveType.getPrimitiveTypeName(), primitiveType.getTypeLength(), maxRep, maxDef);
         this.primitiveType = primitiveType;
-        this.hiveType = columnType;
     }
 
     public PrimitiveType getPrimitiveType()
     {
         return primitiveType;
-    }
-
-    public Optional<HiveType> getHiveType()
-    {
-        return hiveType;
     }
 }

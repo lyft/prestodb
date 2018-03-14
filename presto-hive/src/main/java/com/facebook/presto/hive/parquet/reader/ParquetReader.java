@@ -38,7 +38,6 @@ import parquet.schema.MessageType;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -124,7 +123,7 @@ public class ParquetReader
         currentPosition += batchSize;
         for (PrimitiveColumnIO columnIO : getColumns(fileSchema, requestedSchema)) {
             ColumnDescriptor descriptor = columnIO.getColumnDescriptor();
-            RichColumnDescriptor column = new RichColumnDescriptor(descriptor.getPath(), columnIO.getType().asPrimitiveType(), Optional.empty(), descriptor.getMaxRepetitionLevel(), descriptor.getMaxDefinitionLevel());
+            RichColumnDescriptor column = new RichColumnDescriptor(descriptor.getPath(), columnIO.getType().asPrimitiveType(), descriptor.getMaxRepetitionLevel(), descriptor.getMaxDefinitionLevel());
             ParquetColumnReader columnReader = columnReadersMap.get(column);
             columnReader.prepareNextRead(batchSize);
         }
@@ -288,7 +287,7 @@ public class ParquetReader
     {
         for (PrimitiveColumnIO columnIO : getColumns(fileSchema, requestedSchema)) {
             ColumnDescriptor descriptor = columnIO.getColumnDescriptor();
-            RichColumnDescriptor column = new RichColumnDescriptor(descriptor.getPath(), columnIO.getType().asPrimitiveType(), null, descriptor.getMaxRepetitionLevel(), descriptor.getMaxDefinitionLevel());
+            RichColumnDescriptor column = new RichColumnDescriptor(descriptor.getPath(), columnIO.getType().asPrimitiveType(), descriptor.getMaxRepetitionLevel(), descriptor.getMaxDefinitionLevel());
             columnReadersMap.put(column, ParquetColumnReader.createReader(column));
         }
     }
@@ -297,7 +296,7 @@ public class ParquetReader
             throws IOException
     {
         path.add(name);
-        Optional<RichColumnDescriptor> descriptor = getDescriptor(fileSchema, requestedSchema, path, Collections.emptyMap());
+        Optional<RichColumnDescriptor> descriptor = getDescriptor(fileSchema, requestedSchema, path);
         if (!descriptor.isPresent()) {
             path.remove(name);
             return RunLengthEncodedBlock.create(type, null, batchSize);
