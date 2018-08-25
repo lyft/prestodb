@@ -31,7 +31,7 @@ public class ParquetFloatColumnReader
     protected void readValue(BlockBuilder blockBuilder, Type type)
     {
         if (definitionLevel == columnDescriptor.getMaxDefinitionLevel()) {
-            type.writeDouble(blockBuilder, floatToRawIntBits(valuesReader.readFloat()));
+            type.writeLong(blockBuilder, floatToRawIntBits(valuesReader.readFloat()));
         }
         else {
             blockBuilder.appendNull();
