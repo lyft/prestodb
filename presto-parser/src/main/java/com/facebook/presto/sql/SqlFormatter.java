@@ -70,13 +70,13 @@ import com.facebook.presto.sql.tree.Row;
 import com.facebook.presto.sql.tree.SampledRelation;
 import com.facebook.presto.sql.tree.Select;
 import com.facebook.presto.sql.tree.SelectItem;
+import com.facebook.presto.sql.tree.SetPath;
 import com.facebook.presto.sql.tree.SetSession;
 import com.facebook.presto.sql.tree.ShowCatalogs;
 import com.facebook.presto.sql.tree.ShowColumns;
 import com.facebook.presto.sql.tree.ShowCreate;
 import com.facebook.presto.sql.tree.ShowFunctions;
 import com.facebook.presto.sql.tree.ShowGrants;
-import com.facebook.presto.sql.tree.ShowPartitions;
 import com.facebook.presto.sql.tree.ShowSchemas;
 import com.facebook.presto.sql.tree.ShowSession;
 import com.facebook.presto.sql.tree.ShowStats;
@@ -105,7 +105,6 @@ import java.util.stream.Collectors;
 import static com.facebook.presto.sql.ExpressionFormatter.formatExpression;
 import static com.facebook.presto.sql.ExpressionFormatter.formatGroupBy;
 import static com.facebook.presto.sql.ExpressionFormatter.formatOrderBy;
-import static com.facebook.presto.sql.ExpressionFormatter.formatSortItems;
 import static com.facebook.presto.sql.ExpressionFormatter.formatStringLiteral;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.Iterables.getOnlyElement;
@@ -674,30 +673,6 @@ public final class SqlFormatter
         }
 
         @Override
-        protected Void visitShowPartitions(ShowPartitions node, Integer context)
-        {
-            builder.append("SHOW PARTITIONS FROM ")
-                    .append(formatName(node.getTable()));
-
-            if (node.getWhere().isPresent()) {
-                builder.append(" WHERE ")
-                        .append(formatExpression(node.getWhere().get(), parameters));
-            }
-
-            if (!node.getOrderBy().isEmpty()) {
-                builder.append(" ORDER BY ")
-                        .append(formatSortItems(node.getOrderBy(), parameters));
-            }
-
-            if (node.getLimit().isPresent()) {
-                builder.append(" LIMIT ")
-                        .append(node.getLimit().get());
-            }
-
-            return null;
-        }
-
-        @Override
         protected Void visitShowFunctions(ShowFunctions node, Integer context)
         {
             builder.append("SHOW FUNCTIONS");
@@ -735,7 +710,7 @@ public final class SqlFormatter
                 builder.append("IF NOT EXISTS ");
             }
             builder.append(formatName(node.getSchemaName()));
-            builder.append(formatProperties(node.getProperties()));
+            builder.append(formatPropertiesMultiLine(node.getProperties()));
 
             return null;
         }
@@ -783,7 +758,7 @@ public final class SqlFormatter
                 builder.append("\nCOMMENT " + formatStringLiteral(node.getComment().get()));
             }
 
-            builder.append(formatProperties(node.getProperties()));
+            builder.append(formatPropertiesMultiLine(node.getProperties()));
 
             builder.append(" AS ");
             process(node.getQuery(), indent);
@@ -810,10 +785,7 @@ public final class SqlFormatter
                     .map(element -> {
                         if (element instanceof ColumnDefinition) {
                             ColumnDefinition column = (ColumnDefinition) element;
-                            return elementIndent + formatExpression(column.getName(), parameters) + " " + column.getType() +
-                                    column.getComment()
-                                            .map(comment -> " COMMENT " + formatStringLiteral(comment))
-                                            .orElse("");
+                            return elementIndent + formatColumnDefinition(column);
                         }
                         if (element instanceof LikeClause) {
                             LikeClause likeClause = (LikeClause) element;
@@ -837,16 +809,17 @@ public final class SqlFormatter
                 builder.append("\nCOMMENT " + formatStringLiteral(node.getComment().get()));
             }
 
-            builder.append(formatProperties(node.getProperties()));
+            builder.append(formatPropertiesMultiLine(node.getProperties()));
 
             return null;
         }
 
-        private String formatProperties(List<Property> properties)
+        private String formatPropertiesMultiLine(List<Property> properties)
         {
             if (properties.isEmpty()) {
                 return "";
             }
+
             String propertyList = properties.stream()
                     .map(element -> INDENT +
                             formatExpression(element.getName(), parameters) + " = " +
@@ -854,6 +827,20 @@ public final class SqlFormatter
                     .collect(joining(",\n"));
 
             return "\nWITH (\n" + propertyList + "\n)";
+        }
+
+        private String formatPropertiesSingleLine(List<Property> properties)
+        {
+            if (properties.isEmpty()) {
+                return "";
+            }
+
+            String propertyList = properties.stream()
+                    .map(element -> formatExpression(element.getName(), parameters) + " = " +
+                            formatExpression(element.getValue(), parameters))
+                    .collect(joining(", "));
+
+            return " WITH ( " + propertyList + " )";
         }
 
         private static String formatName(String name)
@@ -869,6 +856,15 @@ public final class SqlFormatter
             return name.getOriginalParts().stream()
                     .map(Formatter::formatName)
                     .collect(joining("."));
+        }
+
+        private String formatColumnDefinition(ColumnDefinition column)
+        {
+            return formatExpression(column.getName(), parameters) + " " + column.getType() +
+                    column.getComment()
+                            .map(comment -> " COMMENT " + formatStringLiteral(comment))
+                            .orElse("") +
+                    formatPropertiesSingleLine(column.getProperties());
         }
 
         @Override
@@ -924,9 +920,7 @@ public final class SqlFormatter
             builder.append("ALTER TABLE ")
                     .append(node.getName())
                     .append(" ADD COLUMN ")
-                    .append(node.getColumn().getName())
-                    .append(" ")
-                    .append(node.getColumn().getType());
+                    .append(formatColumnDefinition(node.getColumn()));
 
             return null;
         }
@@ -1130,6 +1124,15 @@ public final class SqlFormatter
                 }
                 builder.append(node.getTableName().get());
             }
+
+            return null;
+        }
+
+        @Override
+        public Void visitSetPath(SetPath node, Integer indent)
+        {
+            builder.append("SET PATH ");
+            builder.append(Joiner.on(", ").join(node.getPathSpecification().getPath()));
 
             return null;
         }

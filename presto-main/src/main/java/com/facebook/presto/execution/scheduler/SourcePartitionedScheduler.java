@@ -45,9 +45,7 @@ import static com.facebook.presto.execution.scheduler.ScheduleResult.BlockedReas
 import static com.facebook.presto.execution.scheduler.ScheduleResult.BlockedReason.NO_ACTIVE_DRIVER_GROUP;
 import static com.facebook.presto.execution.scheduler.ScheduleResult.BlockedReason.SPLIT_QUEUES_FULL;
 import static com.facebook.presto.execution.scheduler.ScheduleResult.BlockedReason.WAITING_FOR_SOURCE;
-import static com.facebook.presto.spi.StandardErrorCode.NO_NODES_AVAILABLE;
 import static com.facebook.presto.spi.connector.NotPartitionedPartitionHandle.NOT_PARTITIONED;
-import static com.facebook.presto.util.Failures.checkCondition;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.base.Verify.verify;
@@ -117,6 +115,11 @@ public class SourcePartitionedScheduler
         this.autoDropCompletedLifespans = autoDropCompletedLifespans;
     }
 
+    public PlanNodeId getPlanNodeId()
+    {
+        return partitionedNode;
+    }
+
     /**
      * Obtains an instance of {@code SourcePartitionedScheduler} suitable for use as a
      * stage scheduler.
@@ -124,23 +127,25 @@ public class SourcePartitionedScheduler
      * This returns an ungrouped {@code SourcePartitionedScheduler} that requires
      * minimal management from the caller, which is ideal for use as a stage scheduler.
      */
-    public static SourcePartitionedScheduler simpleSourcePartitionedScheduler(
+    public static StageScheduler newSourcePartitionedSchedulerAsStageScheduler(
             SqlStageExecution stage,
             PlanNodeId partitionedNode,
             SplitSource splitSource,
             SplitPlacementPolicy splitPlacementPolicy,
             int splitBatchSize)
     {
+        // TODO: SourcePartitionedScheduler should be in two parts.
+        // The first part fulfills the responsibility of SourceScheduler.
+        // The second part wraps it to provide a StageScheduler.
         SourcePartitionedScheduler result = new SourcePartitionedScheduler(stage, partitionedNode, splitSource, splitPlacementPolicy, splitBatchSize, true);
         result.startLifespan(Lifespan.taskWide(), NOT_PARTITIONED);
         return result;
     }
 
     /**
-     * Obtains an instance of {@code SourcePartitionedScheduler} suitable for use
-     * in FixedSourcePartitionedScheduler.
+     * Obtains a {@code SourceScheduler} suitable for use in FixedSourcePartitionedScheduler.
      * <p>
-     * This returns a {@code SourcePartitionedScheduler} that can be used for a pipeline
+     * This returns a {@code SourceScheduler} that can be used for a pipeline
      * that is either ungrouped or grouped. However, the caller is responsible initializing
      * the driver groups in this scheduler accordingly.
      * <p>
@@ -148,17 +153,49 @@ public class SourcePartitionedScheduler
      * in addition to {@link #schedule()} on the returned object. Otherwise, lifecycle
      * transitioning of the object will not work properly.
      */
-    public static SourcePartitionedScheduler managedSourcePartitionedScheduler(
+    public static SourceScheduler newSourcePartitionedSchedulerAsSourceScheduler(
             SqlStageExecution stage,
             PlanNodeId partitionedNode,
             SplitSource splitSource,
             SplitPlacementPolicy splitPlacementPolicy,
             int splitBatchSize)
     {
-        return new SourcePartitionedScheduler(stage, partitionedNode, splitSource, splitPlacementPolicy, splitBatchSize, false);
+        SourcePartitionedScheduler sourcePartitionedScheduler = new SourcePartitionedScheduler(stage, partitionedNode, splitSource, splitPlacementPolicy, splitBatchSize, false);
+        return new SourceScheduler()
+        {
+            @Override
+            public ScheduleResult schedule()
+            {
+                return sourcePartitionedScheduler.schedule();
+            }
+
+            @Override
+            public void close()
+            {
+                sourcePartitionedScheduler.close();
+            }
+
+            @Override
+            public PlanNodeId getPlanNodeId()
+            {
+                return sourcePartitionedScheduler.getPlanNodeId();
+            }
+
+            @Override
+            public void startLifespan(Lifespan lifespan, ConnectorPartitionHandle partitionHandle)
+            {
+                sourcePartitionedScheduler.startLifespan(lifespan, partitionHandle);
+            }
+
+            @Override
+            public List<Lifespan> drainCompletedLifespans()
+            {
+                return sourcePartitionedScheduler.drainCompletedLifespans();
+            }
+        };
     }
 
-    public synchronized void startLifespan(Lifespan lifespan, ConnectorPartitionHandle partitionHandle)
+    private synchronized void startLifespan(Lifespan lifespan, ConnectorPartitionHandle partitionHandle)
     {
         checkState(state == State.INITIALIZED || state == State.SPLITS_ADDED);
         scheduleGroups.put(lifespan, new ScheduleGroup(partitionHandle));
@@ -169,6 +206,8 @@ public class SourcePartitionedScheduler
     @Override
     public synchronized ScheduleResult schedule()
     {
+        dropListenersFromWhenFinishedOrNewLifespansAdded();
+
         int overallSplitAssignmentCount = 0;
         ImmutableSet.Builder<RemoteTask> overallNewTasks = ImmutableSet.builder();
         List<ListenableFuture<?>> overallBlockedFutures = new ArrayList<>();
@@ -181,7 +220,7 @@ public class SourcePartitionedScheduler
             ScheduleGroup scheduleGroup = entry.getValue();
             Set<Split> pendingSplits = scheduleGroup.pendingSplits;
 
-            if (scheduleGroup.state != ScheduleGroupState.DISCOVERING_SPLITS) {
+            if (scheduleGroup.state == ScheduleGroupState.NO_MORE_SPLITS || scheduleGroup.state == ScheduleGroupState.DONE) {
                 verify(scheduleGroup.nextSplitBatchFuture == null);
             }
             else if (pendingSplits.isEmpty()) {
@@ -197,7 +236,20 @@ public class SourcePartitionedScheduler
                     SplitBatch nextSplits = getFutureValue(scheduleGroup.nextSplitBatchFuture);
                     scheduleGroup.nextSplitBatchFuture = null;
                     pendingSplits.addAll(nextSplits.getSplits());
-                    if (nextSplits.isLastBatch() && scheduleGroup.state == ScheduleGroupState.DISCOVERING_SPLITS) {
+                    if (nextSplits.isLastBatch()) {
+                        if (scheduleGroup.state == ScheduleGroupState.INITIALIZED && pendingSplits.isEmpty()) {
+                            // Add an empty split in case no splits have been produced for the source.
+                            // For source operators, they never take input, but they may produce output.
+                            // This is well handled by Presto execution engine.
+                            // However, there are certain non-source operators that may produce output without any input,
+                            // for example, 1) an AggregationOperator, 2) a HashAggregationOperator where one of the grouping sets is ().
+                            // Scheduling an empty split kicks off necessary driver instantiation to make this work.
+                            pendingSplits.add(new Split(
+                                    splitSource.getConnectorId(),
+                                    splitSource.getTransactionHandle(),
+                                    new EmptySplit(splitSource.getConnectorId()),
+                                    lifespan));
+                        }
                         scheduleGroup.state = ScheduleGroupState.NO_MORE_SPLITS;
                     }
                 }
@@ -214,6 +266,9 @@ public class SourcePartitionedScheduler
                     continue;
                 }
 
+                if (scheduleGroup.state == ScheduleGroupState.INITIALIZED) {
+                    scheduleGroup.state = ScheduleGroupState.SPLITS_ADDED;
+                }
                 if (state == State.INITIALIZED) {
                     state = State.SPLITS_ADDED;
                 }
@@ -273,12 +328,9 @@ public class SourcePartitionedScheduler
         if ((state == State.NO_MORE_SPLITS || state == State.FINISHED) || (scheduleGroups.isEmpty() && splitSource.isFinished())) {
             switch (state) {
                 case INITIALIZED:
-                    // we have not scheduled a single split so far
-                    state = State.SPLITS_ADDED;
-                    ScheduleResult emptySplitScheduleResult = scheduleEmptySplit();
-                    overallNewTasks.addAll(emptySplitScheduleResult.getNewTasks());
-                    overallSplitAssignmentCount++;
-                    // fall through
+                    // We have not scheduled a single split so far.
+                    // But this shouldn't be possible. See usage of EmptySplit in this method.
+                    throw new IllegalStateException("At least 1 split should have been scheduled for this plan node");
                 case SPLITS_ADDED:
                     state = State.NO_MORE_SPLITS;
                     splitSource.close();
@@ -321,13 +373,32 @@ public class SourcePartitionedScheduler
                 overallSplitAssignmentCount);
     }
 
+    private synchronized void dropListenersFromWhenFinishedOrNewLifespansAdded()
+    {
+        // whenFinishedOrNewLifespanAdded may remain in a not-done state for an extended period of time.
+        // As a result, over time, it can retain a huge number of listener objects.
+
+        // Whenever schedule is called, holding onto the previous listener is not useful anymore.
+        // Therefore, we drop those listeners here by recreating the future.
+
+        // Note: The following implementation is thread-safe because whenFinishedOrNewLifespanAdded can only be completed
+        // while holding the monitor of this.
+
+        if (whenFinishedOrNewLifespanAdded.isDone()) {
+            return;
+        }
+
+        whenFinishedOrNewLifespanAdded.cancel(true);
+        whenFinishedOrNewLifespanAdded = SettableFuture.create();
+    }
+
     @Override
     public void close()
     {
         splitSource.close();
     }
 
-    public synchronized List<Lifespan> drainCompletedLifespans()
+    private synchronized List<Lifespan> drainCompletedLifespans()
     {
         if (scheduleGroups.isEmpty()) {
             // Invoking splitSource.isFinished would fail if it was already closed, which is possible if scheduleGroups is empty.
@@ -352,22 +423,6 @@ public class SourcePartitionedScheduler
         }
 
         return result.build();
-    }
-
-    private ScheduleResult scheduleEmptySplit()
-    {
-        state = State.SPLITS_ADDED;
-
-        List<Node> nodes = splitPlacementPolicy.allNodes();
-        checkCondition(!nodes.isEmpty(), NO_NODES_AVAILABLE, "No nodes available to run query");
-        Node node = nodes.iterator().next();
-
-        Split emptySplit = new Split(
-                splitSource.getConnectorId(),
-                splitSource.getTransactionHandle(),
-                new EmptySplit(splitSource.getConnectorId()));
-        Set<RemoteTask> emptyTask = assignSplits(ImmutableMultimap.of(node, emptySplit), ImmutableMultimap.of());
-        return new ScheduleResult(false, emptyTask, 1);
     }
 
     private Set<RemoteTask> assignSplits(Multimap<Node, Split> splitAssignment, Multimap<Node, Lifespan> noMoreSplitsNotification)
@@ -422,7 +477,7 @@ public class SourcePartitionedScheduler
         public ListenableFuture<SplitBatch> nextSplitBatchFuture;
         public ListenableFuture<?> placementFuture = Futures.immediateFuture(null);
         public final Set<Split> pendingSplits = new HashSet<>();
-        public ScheduleGroupState state = ScheduleGroupState.DISCOVERING_SPLITS;
+        public ScheduleGroupState state = ScheduleGroupState.INITIALIZED;
 
         public ScheduleGroup(ConnectorPartitionHandle partitionHandle)
         {
@@ -433,9 +488,14 @@ public class SourcePartitionedScheduler
     private enum ScheduleGroupState
     {
         /**
-         * The underlying SplitSource is not complete.
+         * No splits have been added to pendingSplits set.
          */
-        DISCOVERING_SPLITS,
+        INITIALIZED,
+
+        /**
+         * At least one split has been added to pendingSplits set.
+         */
+        SPLITS_ADDED,
 
         /**
          * All splits from underlying SplitSource has been discovered.

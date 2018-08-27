@@ -18,7 +18,7 @@ import com.facebook.presto.metadata.Signature;
 import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.type.Decimals;
 import com.facebook.presto.spi.type.Type;
-import com.facebook.presto.sql.FunctionInvoker;
+import com.facebook.presto.sql.InterpretedFunctionInvoker;
 import com.facebook.presto.sql.analyzer.SemanticException;
 import com.facebook.presto.sql.tree.AstVisitor;
 import com.facebook.presto.sql.tree.BinaryLiteral;
@@ -45,7 +45,7 @@ import static com.facebook.presto.sql.analyzer.SemanticErrorCode.INVALID_LITERAL
 import static com.facebook.presto.sql.analyzer.SemanticErrorCode.TYPE_MISMATCH;
 import static com.facebook.presto.type.JsonType.JSON;
 import static com.facebook.presto.util.DateTimeUtils.parseDayTimeInterval;
-import static com.facebook.presto.util.DateTimeUtils.parseTime;
+import static com.facebook.presto.util.DateTimeUtils.parseTimeLiteral;
 import static com.facebook.presto.util.DateTimeUtils.parseTimestampLiteral;
 import static com.facebook.presto.util.DateTimeUtils.parseYearMonthInterval;
 import static io.airlift.slice.Slices.utf8Slice;
@@ -66,12 +66,12 @@ public final class LiteralInterpreter
             extends AstVisitor<Object, ConnectorSession>
     {
         private final Metadata metadata;
-        private final FunctionInvoker functionInvoker;
+        private final InterpretedFunctionInvoker functionInvoker;
 
         private LiteralVisitor(Metadata metadata)
         {
             this.metadata = metadata;
-            this.functionInvoker = new FunctionInvoker(metadata.getFunctionRegistry());
+            this.functionInvoker = new InterpretedFunctionInvoker(metadata.getFunctionRegistry());
         }
 
         @Override
@@ -147,14 +147,24 @@ public final class LiteralInterpreter
         @Override
         protected Long visitTimeLiteral(TimeLiteral node, ConnectorSession session)
         {
-            return parseTime(session.getTimeZoneKey(), node.getValue());
+            if (session.isLegacyTimestamp()) {
+                return parseTimeLiteral(session.getTimeZoneKey(), node.getValue());
+            }
+            else {
+                return parseTimeLiteral(node.getValue());
+            }
         }
 
         @Override
         protected Long visitTimestampLiteral(TimestampLiteral node, ConnectorSession session)
         {
             try {
-                return parseTimestampLiteral(session.getTimeZoneKey(), node.getValue());
+                if (session.isLegacyTimestamp()) {
+                    return parseTimestampLiteral(session.getTimeZoneKey(), node.getValue());
+                }
+                else {
+                    return parseTimestampLiteral(node.getValue());
+                }
             }
             catch (RuntimeException e) {
                 throw new SemanticException(INVALID_LITERAL, node, "'%s' is not a valid timestamp literal", node.getValue());

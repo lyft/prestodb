@@ -25,6 +25,8 @@ import com.facebook.presto.tpch.TpchPlugin;
 import com.google.common.collect.ImmutableMap;
 import org.intellij.lang.annotations.Language;
 import org.testng.annotations.AfterClass;
+import org.testng.annotations.BeforeClass;
+import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
 
 import java.util.ArrayList;
@@ -66,7 +68,20 @@ public class TestMemoryManager
             .setSchema("tiny")
             .build();
 
-    private final ExecutorService executor = newCachedThreadPool();
+    private ExecutorService executor;
+
+    @BeforeClass
+    public void setUp()
+    {
+        executor = newCachedThreadPool();
+    }
+
+    @AfterClass(alwaysRun = true)
+    public void shutdown()
+    {
+        executor.shutdownNow();
+        executor = null;
+    }
 
     @Test(timeOut = 240_000)
     public void testResourceOverCommit()
@@ -110,7 +125,7 @@ public class TestMemoryManager
             QueryId fakeQueryId = new QueryId("fake");
             for (TestingPrestoServer server : queryRunner.getServers()) {
                 for (MemoryPool pool : server.getLocalMemoryManager().getPools()) {
-                    assertTrue(pool.tryReserve(fakeQueryId, pool.getMaxBytes()));
+                    assertTrue(pool.tryReserve(fakeQueryId, "test", pool.getMaxBytes()));
                 }
             }
 
@@ -137,7 +152,7 @@ public class TestMemoryManager
             for (TestingPrestoServer server : queryRunner.getServers()) {
                 MemoryPool reserved = server.getLocalMemoryManager().getPool(RESERVED_POOL);
                 // Free up the entire pool
-                reserved.free(fakeQueryId, reserved.getMaxBytes());
+                reserved.free(fakeQueryId, "test", reserved.getMaxBytes());
                 assertTrue(reserved.getFreeBytes() > 0);
             }
 
@@ -193,7 +208,7 @@ public class TestMemoryManager
             QueryId fakeQueryId = new QueryId("fake");
             for (TestingPrestoServer server : queryRunner.getServers()) {
                 for (MemoryPool pool : server.getLocalMemoryManager().getPools()) {
-                    assertTrue(pool.tryReserve(fakeQueryId, pool.getMaxBytes()));
+                    assertTrue(pool.tryReserve(fakeQueryId, "test", pool.getMaxBytes()));
                 }
             }
 
@@ -237,7 +252,7 @@ public class TestMemoryManager
             for (TestingPrestoServer server : queryRunner.getServers()) {
                 MemoryPool reserved = server.getLocalMemoryManager().getPool(RESERVED_POOL);
                 // Free up the entire pool
-                reserved.free(fakeQueryId, reserved.getMaxBytes());
+                reserved.free(fakeQueryId, "test", reserved.getMaxBytes());
                 assertTrue(reserved.getFreeBytes() > 0);
             }
 
@@ -258,7 +273,7 @@ public class TestMemoryManager
                 assertEquals(reserved.getMaxBytes(), reserved.getFreeBytes());
                 MemoryPool general = worker.getLocalMemoryManager().getPool(GENERAL_POOL);
                 // Free up the memory we reserved earlier
-                general.free(fakeQueryId, general.getMaxBytes());
+                general.free(fakeQueryId, "test", general.getMaxBytes());
                 assertEquals(general.getMaxBytes(), general.getFreeBytes());
             }
         }
@@ -285,20 +300,41 @@ public class TestMemoryManager
                 .anyMatch(task -> task.getBlockedReasons().contains(WAITING_FOR_MEMORY));
     }
 
-    @Test(timeOut = 60_000, expectedExceptions = RuntimeException.class, expectedExceptionsMessageRegExp = ".*Query exceeded max memory size of 1kB.*")
-    public void testQueryMemoryLimit()
+    @DataProvider(name = "legacy_system_pool_enabled")
+    public Object[][] legacySystemPoolEnabled()
+    {
+        return new Object[][] {{true}, {false}};
+    }
+
+    @Test(timeOut = 60_000, dataProvider = "legacy_system_pool_enabled", expectedExceptions = RuntimeException.class, expectedExceptionsMessageRegExp = ".*Query exceeded distributed user memory limit of 1kB.*")
+    public void testQueryUserMemoryLimit(boolean systemPoolEnabled)
             throws Exception
     {
         Map<String, String> properties = ImmutableMap.<String, String>builder()
                 .put("task.max-partial-aggregation-memory", "1B")
                 .put("query.max-memory", "1kB")
+                .put("query.max-total-memory", "1GB")
+                .put("deprecated.legacy-system-pool-enabled", String.valueOf(systemPoolEnabled))
                 .build();
         try (QueryRunner queryRunner = createQueryRunner(SESSION, properties)) {
             queryRunner.execute(SESSION, "SELECT COUNT(*), repeat(orderstatus, 1000) FROM orders GROUP BY 2");
         }
     }
 
-    @Test(timeOut = 60_000, expectedExceptions = RuntimeException.class, expectedExceptionsMessageRegExp = ".*Query exceeded local user memory limit of 1kB.*")
+    @Test(timeOut = 60_000, expectedExceptions = RuntimeException.class, expectedExceptionsMessageRegExp = ".*Query exceeded distributed total memory limit of 2kB.*")
+    public void testQueryTotalMemoryLimit()
+            throws Exception
+    {
+        Map<String, String> properties = ImmutableMap.<String, String>builder()
+                .put("query.max-memory", "1kB")
+                .put("query.max-total-memory", "2kB")
+                .build();
+        try (QueryRunner queryRunner = createQueryRunner(SESSION, properties)) {
+            queryRunner.execute(SESSION, "SELECT COUNT(*), repeat(orderstatus, 1000) FROM orders GROUP BY 2");
+        }
+    }
+
+    @Test(timeOut = 60_000, expectedExceptions = RuntimeException.class, expectedExceptionsMessageRegExp = ".*Query exceeded per-node user memory limit of 1kB.*")
     public void testQueryMemoryPerNodeLimit()
             throws Exception
     {
@@ -309,12 +345,6 @@ public class TestMemoryManager
         try (QueryRunner queryRunner = createQueryRunner(SESSION, properties)) {
             queryRunner.execute(SESSION, "SELECT COUNT(*), repeat(orderstatus, 1000) FROM orders GROUP BY 2");
         }
-    }
-
-    @AfterClass(alwaysRun = true)
-    public void shutdown()
-    {
-        executor.shutdownNow();
     }
 
     public static DistributedQueryRunner createQueryRunner(Session session, Map<String, String> properties)

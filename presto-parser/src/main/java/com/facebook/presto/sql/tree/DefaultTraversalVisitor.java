@@ -330,9 +330,7 @@ public abstract class DefaultTraversalVisitor<R, C>
     {
         process(node.getValue(), context);
         process(node.getPattern(), context);
-        if (node.getEscape() != null) {
-            process(node.getEscape(), context);
-        }
+        node.getEscape().ifPresent(value -> process(value, context));
 
         return null;
     }
@@ -496,7 +494,7 @@ public abstract class DefaultTraversalVisitor<R, C>
     @Override
     protected R visitSimpleGroupBy(SimpleGroupBy node, C context)
     {
-        for (Expression expression : node.getColumnExpressions()) {
+        for (Expression expression : node.getExpressions()) {
             process(expression, context);
         }
 
@@ -578,20 +576,6 @@ public abstract class DefaultTraversalVisitor<R, C>
         }
         for (Property property : node.getProperties()) {
             process(property, context);
-        }
-
-        return null;
-    }
-
-    @Override
-    protected R visitShowPartitions(ShowPartitions node, C context)
-    {
-        if (node.getWhere().isPresent()) {
-            process(node.getWhere().get(), context);
-        }
-
-        for (SortItem sortItem : node.getOrderBy()) {
-            process(sortItem, context);
         }
 
         return null;

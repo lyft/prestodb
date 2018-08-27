@@ -15,12 +15,14 @@ package com.facebook.presto.sql.planner;
 
 import com.facebook.presto.Session;
 import com.facebook.presto.SystemSessionProperties;
+import com.facebook.presto.execution.QueryManagerConfig;
 import com.facebook.presto.metadata.Metadata;
 import com.facebook.presto.metadata.TableLayout;
 import com.facebook.presto.metadata.TableLayout.TablePartitioning;
+import com.facebook.presto.operator.StageExecutionStrategy;
+import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.connector.ConnectorPartitionHandle;
 import com.facebook.presto.spi.connector.ConnectorPartitioningHandle;
-import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.sql.planner.plan.AggregationNode;
 import com.facebook.presto.sql.planner.plan.ExchangeNode;
 import com.facebook.presto.sql.planner.plan.ExplainAnalyzeNode;
@@ -37,20 +39,20 @@ import com.facebook.presto.sql.planner.plan.TableFinishNode;
 import com.facebook.presto.sql.planner.plan.TableScanNode;
 import com.facebook.presto.sql.planner.plan.ValuesNode;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
+
+import javax.inject.Inject;
 
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
+import static com.facebook.presto.SystemSessionProperties.getQueryMaxStageCount;
 import static com.facebook.presto.SystemSessionProperties.isForceSingleNodeOutput;
-import static com.facebook.presto.operator.PipelineExecutionStrategy.GROUPED_EXECUTION;
-import static com.facebook.presto.operator.PipelineExecutionStrategy.UNGROUPED_EXECUTION;
+import static com.facebook.presto.spi.StandardErrorCode.QUERY_HAS_TOO_MANY_STAGES;
 import static com.facebook.presto.spi.connector.NotPartitionedPartitionHandle.NOT_PARTITIONED;
 import static com.facebook.presto.sql.planner.SchedulingOrderVisitor.scheduleOrder;
 import static com.facebook.presto.sql.planner.SystemPartitioningHandle.COORDINATOR_DISTRIBUTION;
@@ -69,9 +71,16 @@ import static java.util.Objects.requireNonNull;
  */
 public class PlanFragmenter
 {
+    @Inject
+    public PlanFragmenter(QueryManagerConfig queryManagerConfig)
+    {
+        // TODO: Remove query_max_stage_count session property and use queryManagerConfig.getMaxStageCount() here
+        this();
+    }
+
     private PlanFragmenter() {}
 
-    public static SubPlan createSubPlans(Session session, Metadata metadata, NodePartitioningManager nodePartitioningManager, Plan plan, boolean forceSingleNode)
+    public SubPlan createSubPlans(Session session, Metadata metadata, NodePartitioningManager nodePartitioningManager, Plan plan, boolean forceSingleNode)
     {
         Fragmenter fragmenter = new Fragmenter(session, metadata, plan.getTypes());
 
@@ -85,9 +94,22 @@ public class PlanFragmenter
         subPlan = analyzeGroupedExecution(session, metadata, nodePartitioningManager, subPlan);
 
         checkState(!isForceSingleNodeOutput(session) || subPlan.getFragment().getPartitioning().isSingleNode(), "Root of PlanFragment is not single node");
-        subPlan.sanityCheck();
+        sanityCheckFragmentedPlan(subPlan, getQueryMaxStageCount(session));
 
         return subPlan;
+    }
+
+    private void sanityCheckFragmentedPlan(SubPlan subPlan, int maxStageCount)
+    {
+        subPlan.sanityCheck();
+        int fragmentCount = subPlan.getAllFragments().size();
+        if (fragmentCount > maxStageCount) {
+            throw new PrestoException(QUERY_HAS_TOO_MANY_STAGES, format(
+                    "Number of stages in the query (%s) exceeds the allowed maximum (%s). " +
+                            "If the query contains multiple DISTINCTs, please set the use_mark_distinct session property to false. " +
+                            "If the query contains multiple CTEs that are referenced more than once, please create temporary table(s) for one or more of the CTEs.",
+                    fragmentCount, maxStageCount));
+        }
     }
 
     private static SubPlan analyzeGroupedExecution(Session session, Metadata metadata, NodePartitioningManager nodePartitioningManager, SubPlan subPlan)
@@ -95,7 +117,7 @@ public class PlanFragmenter
         PlanFragment fragment = subPlan.getFragment();
         GroupedExecutionProperties properties = fragment.getRoot().accept(new GroupedExecutionTagger(session, metadata, nodePartitioningManager), null);
         if (properties.isSubTreeUseful()) {
-            fragment = fragment.withGroupedExecution(GROUPED_EXECUTION);
+            fragment = fragment.withGroupedExecution(properties.getCapableTableScanNodes());
         }
         ImmutableList.Builder<SubPlan> result = ImmutableList.builder();
         for (SubPlan child : subPlan.getChildren()) {
@@ -111,14 +133,14 @@ public class PlanFragmenter
 
         private final Session session;
         private final Metadata metadata;
-        private final Map<Symbol, Type> types;
+        private final TypeProvider types;
         private int nextFragmentId = ROOT_FRAGMENT_ID + 1;
 
-        public Fragmenter(Session session, Metadata metadata, Map<Symbol, Type> types)
+        public Fragmenter(Session session, Metadata metadata, TypeProvider types)
         {
             this.session = requireNonNull(session, "session is null");
             this.metadata = requireNonNull(metadata, "metadata is null");
-            this.types = ImmutableMap.copyOf(requireNonNull(types, "types is null"));
+            this.types = requireNonNull(types, "types is null");
         }
 
         public SubPlan buildRootFragment(PlanNode root, FragmentProperties properties)
@@ -142,11 +164,11 @@ public class PlanFragmenter
             PlanFragment fragment = new PlanFragment(
                     fragmentId,
                     root,
-                    Maps.filterKeys(types, in(dependencies)),
+                    Maps.filterKeys(types.allTypes(), in(dependencies)),
                     properties.getPartitioningHandle(),
                     schedulingOrder,
                     properties.getPartitioningScheme(),
-                    UNGROUPED_EXECUTION);
+                    StageExecutionStrategy.ungroupedExecution());
 
             return new SubPlan(fragment, properties.getChildren());
         }
@@ -232,7 +254,7 @@ public class PlanFragmenter
                     .map(PlanFragment::getId)
                     .collect(toImmutableList());
 
-            return new RemoteSourceNode(exchange.getId(), childrenIds, exchange.getOutputSymbols());
+            return new RemoteSourceNode(exchange.getId(), childrenIds, exchange.getOutputSymbols(), exchange.getOrderingScheme(), exchange.getType());
         }
 
         private SubPlan buildSubPlan(PlanNode node, FragmentProperties properties, RewriteContext<FragmentProperties> context)
@@ -406,7 +428,7 @@ public class PlanFragmenter
         protected GroupedExecutionProperties visitPlan(PlanNode node, Void context)
         {
             if (node.getSources().isEmpty()) {
-                return new GroupedExecutionProperties(false, false);
+                return GroupedExecutionProperties.notCapable();
             }
             return processChildren(node);
         }
@@ -419,7 +441,7 @@ public class PlanFragmenter
 
             if (!node.getDistributionType().isPresent()) {
                 // This is possible when the optimizers is invoked with `forceSingleNode` set to true.
-                return new GroupedExecutionProperties(false, false);
+                return GroupedExecutionProperties.notCapable();
             }
 
             switch (node.getDistributionType().get()) {
@@ -430,7 +452,13 @@ public class PlanFragmenter
                     return left;
                 case PARTITIONED:
                     if (left.currentNodeCapable && right.currentNodeCapable) {
-                        return new GroupedExecutionProperties(true, true);
+                        return new GroupedExecutionProperties(
+                                true,
+                                true,
+                                ImmutableList.<PlanNodeId>builder()
+                                        .addAll(left.capableTableScanNodes)
+                                        .addAll(right.capableTableScanNodes)
+                                        .build());
                     }
                     // right.subTreeUseful && !left.currentNodeCapable:
                     //   It's not particularly helpful to do grouped execution on the right side
@@ -450,18 +478,18 @@ public class PlanFragmenter
         @Override
         public GroupedExecutionProperties visitAggregation(AggregationNode node, Void context)
         {
-            GroupedExecutionProperties properties = processChildren(node);
+            GroupedExecutionProperties properties = node.getSource().accept(this, null);
             if (groupedExecutionForAggregation && properties.isCurrentNodeCapable()) {
                 switch (node.getStep()) {
                     case SINGLE:
                     case FINAL:
-                        return new GroupedExecutionProperties(true, true);
+                        return new GroupedExecutionProperties(true, true, properties.capableTableScanNodes);
                     case PARTIAL:
                     case INTERMEDIATE:
-                        return new GroupedExecutionProperties(true, properties.isSubTreeUseful());
+                        return properties;
                 }
             }
-            return new GroupedExecutionProperties(false, false);
+            return GroupedExecutionProperties.notCapable();
         }
 
         @Override
@@ -469,12 +497,15 @@ public class PlanFragmenter
         {
             Optional<TablePartitioning> tablePartitioning = metadata.getLayout(session, node.getLayout().get()).getTablePartitioning();
             if (!tablePartitioning.isPresent()) {
-                return new GroupedExecutionProperties(false, false);
+                return GroupedExecutionProperties.notCapable();
             }
             List<ConnectorPartitionHandle> partitionHandles = nodePartitioningManager.listPartitionHandles(session, tablePartitioning.get().getPartitioningHandle());
-            return new GroupedExecutionProperties(
-                    !ImmutableList.of(NOT_PARTITIONED).equals(partitionHandles),
-                    false);
+            if (ImmutableList.of(NOT_PARTITIONED).equals(partitionHandles)) {
+                return new GroupedExecutionProperties(false, false, ImmutableList.of());
+            }
+            else {
+                return new GroupedExecutionProperties(true, false, ImmutableList.of(node.getId()));
+            }
         }
 
         private GroupedExecutionProperties processChildren(PlanNode node)
@@ -484,14 +515,22 @@ public class PlanFragmenter
             // (except for special cases as detailed in addSourceDistribution).
             // As a result, it is not necessary to check the compatibility between node.getSources because
             // they are guaranteed to be compatible.
-            boolean currentNodeCapable = true;
-            boolean subTreeUseful = false;
+
+            // * If any child is "not capable", return "not capable"
+            // * When all children are capable ("capable and useful" or "capable but not useful")
+            //   * if any child is "capable and useful", return "capable and useful"
+            //   * if no children is "capable and useful", return "capable but not useful"
+            boolean anyUseful = false;
+            ImmutableList.Builder<PlanNodeId> capableTableScanNodes = ImmutableList.builder();
             for (PlanNode source : node.getSources()) {
                 GroupedExecutionProperties properties = source.accept(this, null);
-                currentNodeCapable &= properties.isCurrentNodeCapable();
-                subTreeUseful |= properties.isSubTreeUseful();
+                if (!properties.isCurrentNodeCapable()) {
+                    return GroupedExecutionProperties.notCapable();
+                }
+                anyUseful |= properties.isSubTreeUseful();
+                capableTableScanNodes.addAll(properties.capableTableScanNodes);
             }
-            return new GroupedExecutionProperties(currentNodeCapable, subTreeUseful);
+            return new GroupedExecutionProperties(true, anyUseful, capableTableScanNodes.build());
         }
     }
 
@@ -511,13 +550,21 @@ public class PlanFragmenter
 
         private final boolean currentNodeCapable;
         private final boolean subTreeUseful;
+        private final List<PlanNodeId> capableTableScanNodes;
 
-        public GroupedExecutionProperties(boolean currentNodeCapable, boolean subTreeUseful)
+        public GroupedExecutionProperties(boolean currentNodeCapable, boolean subTreeUseful, List<PlanNodeId> capableTableScanNodes)
         {
             this.currentNodeCapable = currentNodeCapable;
             this.subTreeUseful = subTreeUseful;
+            this.capableTableScanNodes = ImmutableList.copyOf(requireNonNull(capableTableScanNodes, "capableTableScanNodes is null"));
             // Verify that `subTreeUseful` implies `currentNodeCapable`
             checkArgument(!subTreeUseful || currentNodeCapable);
+            checkArgument(currentNodeCapable == !capableTableScanNodes.isEmpty());
+        }
+
+        public static GroupedExecutionProperties notCapable()
+        {
+            return new GroupedExecutionProperties(false, false, ImmutableList.of());
         }
 
         public boolean isCurrentNodeCapable()
@@ -528,6 +575,11 @@ public class PlanFragmenter
         public boolean isSubTreeUseful()
         {
             return subTreeUseful;
+        }
+
+        public List<PlanNodeId> getCapableTableScanNodes()
+        {
+            return capableTableScanNodes;
         }
     }
 }
