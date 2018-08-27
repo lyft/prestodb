@@ -32,6 +32,10 @@ import parquet.column.statistics.Statistics;
 import parquet.io.api.Binary;
 import parquet.schema.PrimitiveType;
 
+import parquet.schema.PrimitiveType.PrimitiveTypeName;
+import parquet.schema.Type.Repetition;
+
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -206,6 +210,27 @@ public class TestTupleDomainParquetPredicate
     @Test
     public void testMatchesWithDescriptors()
     {
+        RichColumnDescriptor column = getColumn();
+        String value = "Test";
+        TupleDomain<ColumnDescriptor> effectivePredicate = getEffectivePredicate(column, createVarcharType(255), value);
+        List<RichColumnDescriptor> columns = singletonList(column);
+        TupleDomainParquetPredicate predicate = new TupleDomainParquetPredicate(effectivePredicate, columns);
+        ParquetDictionaryPage page = new ParquetDictionaryPage(utf8Slice(value), 2, PLAIN_DICTIONARY);
+        assertTrue(predicate.matches(singletonMap(column, new ParquetDictionaryDescriptor(column, Optional.of(page)))));
+    }
+
+    private TupleDomain<ColumnDescriptor> getEffectivePredicate(RichColumnDescriptor column, VarcharType type, String value)
+    {
+        ColumnDescriptor predicateColumn = new ColumnDescriptor(column.getPath(), column.getType(), 0, 0);
+        Domain predicateDomain = Domain.singleValue(type, utf8Slice(value));
+        Map<ColumnDescriptor, Domain> predicateColumns = singletonMap(predicateColumn, predicateDomain);
+        return TupleDomain.withColumnDomains(predicateColumns);
+    }
+
+    private RichColumnDescriptor getColumn()
+    {
+        PrimitiveType type = new PrimitiveType(Repetition.OPTIONAL, PrimitiveTypeName.BINARY, "Test column");
+        return new RichColumnDescriptor(new String[] {"path"}, type, 0, 0);
         ColumnDescriptor columnDescriptor = new ColumnDescriptor(new String[] {"path"}, BINARY, 0, 0);
         RichColumnDescriptor column = new RichColumnDescriptor(columnDescriptor, new PrimitiveType(OPTIONAL, BINARY, "Test column"));
         TupleDomain<ColumnDescriptor> effectivePredicate = getEffectivePredicate(column, createVarcharType(255), EMPTY_SLICE);
