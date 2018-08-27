@@ -58,8 +58,9 @@ import javax.annotation.concurrent.GuardedBy;
 
 import java.net.URI;
 import java.util.Collection;
-import java.util.HashSet;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Optional;
@@ -106,6 +107,7 @@ public final class HttpRemoteTask
     private final Session session;
     private final String nodeId;
     private final PlanFragment planFragment;
+    private final OptionalInt totalPartitions;
 
     private final AtomicLong nextSplitId = new AtomicLong();
 
@@ -125,7 +127,9 @@ public final class HttpRemoteTask
     @GuardedBy("this")
     private final SetMultimap<PlanNodeId, Lifespan> pendingNoMoreSplitsForLifespan = HashMultimap.create();
     @GuardedBy("this")
-    private final Set<PlanNodeId> noMoreSplits = new HashSet<>();
+    // The keys of this map represent all plan nodes that have "no more splits".
+    // The boolean value of each entry represents whether the "no more splits" notification is pending delivery to workers.
+    private final Map<PlanNodeId, Boolean> noMoreSplits = new HashMap<>();
     @GuardedBy("this")
     private final AtomicReference<OutputBuffers> outputBuffers = new AtomicReference<>();
     private final FutureStateChange<?> whenSplitQueueHasSpace = new FutureStateChange<>();
@@ -158,6 +162,7 @@ public final class HttpRemoteTask
             URI location,
             PlanFragment planFragment,
             Multimap<PlanNodeId, Split> initialSplits,
+            OptionalInt totalPartitions,
             OutputBuffers outputBuffers,
             HttpClient httpClient,
             Executor executor,
@@ -178,6 +183,7 @@ public final class HttpRemoteTask
         requireNonNull(nodeId, "nodeId is null");
         requireNonNull(location, "location is null");
         requireNonNull(planFragment, "planFragment is null");
+        requireNonNull(totalPartitions, "totalPartitions is null");
         requireNonNull(outputBuffers, "outputBuffers is null");
         requireNonNull(httpClient, "httpClient is null");
         requireNonNull(executor, "executor is null");
@@ -192,6 +198,7 @@ public final class HttpRemoteTask
             this.session = session;
             this.nodeId = nodeId;
             this.planFragment = planFragment;
+            this.totalPartitions = totalPartitions;
             this.outputBuffers.set(outputBuffers);
             this.httpClient = httpClient;
             this.executor = executor;
@@ -310,7 +317,7 @@ public final class HttpRemoteTask
             PlanNodeId sourceId = entry.getKey();
             Collection<Split> splits = entry.getValue();
 
-            checkState(!noMoreSplits.contains(sourceId), "noMoreSplits has already been set for %s", sourceId);
+            checkState(!noMoreSplits.containsKey(sourceId), "noMoreSplits has already been set for %s", sourceId);
             int added = 0;
             for (Split split : splits) {
                 if (pendingSplits.put(sourceId, new ScheduledSplit(nextSplitId.getAndIncrement(), sourceId, split))) {
@@ -334,10 +341,13 @@ public final class HttpRemoteTask
     @Override
     public synchronized void noMoreSplits(PlanNodeId sourceId)
     {
-        if (noMoreSplits.add(sourceId)) {
-            needsUpdate.set(true);
-            scheduleUpdate();
+        if (noMoreSplits.containsKey(sourceId)) {
+            return;
         }
+
+        noMoreSplits.put(sourceId, true);
+        needsUpdate.set(true);
+        scheduleUpdate();
     }
 
     @Override
@@ -437,6 +447,9 @@ public final class HttpRemoteTask
                     removed++;
                 }
             }
+            if (source.isNoMoreSplits()) {
+                noMoreSplits.put(planNodeId, false);
+            }
             for (Lifespan lifespan : source.getNoMoreSplitsForLifespan()) {
                 pendingNoMoreSplitsForLifespan.remove(planNodeId, lifespan);
             }
@@ -490,7 +503,8 @@ public final class HttpRemoteTask
                 session.toSessionRepresentation(),
                 fragment,
                 sources,
-                outputBuffers.get());
+                outputBuffers.get(),
+                totalPartitions);
 
         HttpUriBuilder uriBuilder = getHttpUriBuilder(taskStatus);
         Request request = preparePost()
@@ -525,10 +539,12 @@ public final class HttpRemoteTask
     private synchronized TaskSource getSource(PlanNodeId planNodeId)
     {
         Set<ScheduledSplit> splits = pendingSplits.get(planNodeId);
-        boolean noMoreSplits = this.noMoreSplits.contains(planNodeId);
+        boolean pendingNoMoreSplits = Boolean.TRUE.equals(this.noMoreSplits.get(planNodeId));
+        boolean noMoreSplits = this.noMoreSplits.containsKey(planNodeId);
         Set<Lifespan> noMoreSplitsForLifespan = pendingNoMoreSplitsForLifespan.get(planNodeId);
+
         TaskSource element = null;
-        if (!splits.isEmpty() || !noMoreSplitsForLifespan.isEmpty() || noMoreSplits) {
+        if (!splits.isEmpty() || !noMoreSplitsForLifespan.isEmpty() || pendingNoMoreSplits) {
             element = new TaskSource(planNodeId, splits, noMoreSplitsForLifespan, noMoreSplits);
         }
         return element;

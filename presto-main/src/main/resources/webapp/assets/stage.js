@@ -22,7 +22,7 @@ let OperatorSummary = React.createClass({
 
         const totalWallTime = parseDuration(operator.addInputWall) + parseDuration(operator.getOutputWall) + parseDuration(operator.finishWall) + parseDuration(operator.blockedWall);
 
-        const rowInputRate = totalWallTime === 0 ? 0 : (1.0 * operator.inputPositions) / totalWallTime;
+        const rowInputRate = totalWallTime === 0 ? 0 : (1.0 * operator.inputPositions) / (totalWallTime / 1000.0);
         const byteInputRate = totalWallTime === 0 ? 0 : (1.0 * parseDataSize(operator.inputDataSize)) / (totalWallTime / 1000.0);
 
         return (
@@ -536,7 +536,7 @@ let StagePerformance = React.createClass({
                         </div>
                     </td>
                     <td>
-                        <a onClick={ () => $.ajax({url: 'v1/query/' + query.queryId, type: 'DELETE'}) } className="btn btn-warning" target="_blank">
+                        <a onClick={ () => $.ajax({url: '/v1/query/' + query.queryId, type: 'DELETE'}) } className="btn btn-warning" target="_blank">
                             Kill
                         </a>
                     </td>

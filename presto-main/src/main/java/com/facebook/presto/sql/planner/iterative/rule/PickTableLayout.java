@@ -203,7 +203,7 @@ public class PickTableLayout
         List<TableLayoutResult> layouts = metadata.getLayouts(
                 context.getSession(),
                 node.getTable(),
-                new Constraint<>(simplifiedConstraint, bindings -> true),
+                new Constraint<>(simplifiedConstraint),
                 Optional.of(ImmutableSet.copyOf(node.getAssignments().values())));
         if (layouts.isEmpty()) {
             return new ValuesNode(context.getIdAllocator().getNextId(), node.getOutputSymbols(), ImmutableList.of());
@@ -220,8 +220,7 @@ public class PickTableLayout
                 node.getOutputSymbols(),
                 node.getAssignments(),
                 Optional.of(layout.getLayout().getHandle()),
-                simplifiedConstraint.intersect(layout.getLayout().getPredicate()),
-                Optional.ofNullable(node.getOriginalConstraint()).orElse(predicate));
+                simplifiedConstraint.intersect(layout.getLayout().getPredicate()));
 
         Map<ColumnHandle, Symbol> assignments = ImmutableBiMap.copyOf(node.getAssignments()).inverse();
         Expression resultingPredicate = combineConjuncts(

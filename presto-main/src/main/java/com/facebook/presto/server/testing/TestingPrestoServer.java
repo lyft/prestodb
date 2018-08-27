@@ -189,10 +189,6 @@ public class TestingPrestoServer
                 .put("task.max-worker-threads", "4")
                 .put("exchange.client-threads", "4");
 
-        if (!properties.containsKey("query.max-memory-per-node")) {
-            serverProperties.put("query.max-memory-per-node", "512MB");
-        }
-
         if (coordinator) {
             // TODO: enable failure detector
             serverProperties.put("failure-detector.enabled", "false");
@@ -260,7 +256,6 @@ public class TestingPrestoServer
         catalogManager = injector.getInstance(CatalogManager.class);
         transactionManager = injector.getInstance(TransactionManager.class);
         metadata = injector.getInstance(Metadata.class);
-        statsCalculator = injector.getInstance(StatsCalculator.class);
         accessControl = injector.getInstance(TestingAccessControlManager.class);
         procedureTester = injector.getInstance(ProcedureTester.class);
         splitManager = injector.getInstance(SplitManager.class);
@@ -268,11 +263,13 @@ public class TestingPrestoServer
             resourceGroupManager = Optional.of((InternalResourceGroupManager) injector.getInstance(ResourceGroupManager.class));
             nodePartitioningManager = injector.getInstance(NodePartitioningManager.class);
             clusterMemoryManager = injector.getInstance(ClusterMemoryManager.class);
+            statsCalculator = injector.getInstance(StatsCalculator.class);
         }
         else {
             resourceGroupManager = Optional.empty();
             nodePartitioningManager = null;
             clusterMemoryManager = null;
+            statsCalculator = null;
         }
         localMemoryManager = injector.getInstance(LocalMemoryManager.class);
         nodeManager = injector.getInstance(InternalNodeManager.class);
@@ -372,6 +369,7 @@ public class TestingPrestoServer
 
     public StatsCalculator getStatsCalculator()
     {
+        checkState(coordinator, "not a coordinator");
         return statsCalculator;
     }
 

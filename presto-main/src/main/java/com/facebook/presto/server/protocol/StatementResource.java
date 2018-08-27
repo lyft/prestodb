@@ -64,12 +64,14 @@ import static com.facebook.presto.client.PrestoHeaders.PRESTO_CLEAR_SESSION;
 import static com.facebook.presto.client.PrestoHeaders.PRESTO_CLEAR_TRANSACTION_ID;
 import static com.facebook.presto.client.PrestoHeaders.PRESTO_DEALLOCATED_PREPARE;
 import static com.facebook.presto.client.PrestoHeaders.PRESTO_SET_CATALOG;
+import static com.facebook.presto.client.PrestoHeaders.PRESTO_SET_PATH;
 import static com.facebook.presto.client.PrestoHeaders.PRESTO_SET_SCHEMA;
 import static com.facebook.presto.client.PrestoHeaders.PRESTO_SET_SESSION;
 import static com.facebook.presto.client.PrestoHeaders.PRESTO_STARTED_TRANSACTION_ID;
 import static com.facebook.presto.memory.context.AggregatedMemoryContext.newSimpleAggregatedMemoryContext;
 import static com.google.common.base.Strings.isNullOrEmpty;
 import static com.google.common.net.HttpHeaders.X_FORWARDED_PROTO;
+import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
 import static io.airlift.concurrent.Threads.threadsNamed;
 import static io.airlift.http.server.AsyncResponseHandler.bindAsyncResponse;
 import static java.util.Objects.requireNonNull;
@@ -120,12 +122,11 @@ public class StatementResource
 
     @POST
     @Produces(MediaType.APPLICATION_JSON)
-    public void createQuery(
+    public Response createQuery(
             String statement,
             @HeaderParam(X_FORWARDED_PROTO) String proto,
             @Context HttpServletRequest servletRequest,
-            @Context UriInfo uriInfo,
-            @Suspended AsyncResponse asyncResponse)
+            @Context UriInfo uriInfo)
     {
         if (isNullOrEmpty(statement)) {
             throw new WebApplicationException(Response
@@ -140,7 +141,7 @@ public class StatementResource
 
         SessionContext sessionContext = new HttpRequestSessionContext(servletRequest);
 
-        ExchangeClient exchangeClient = exchangeClientSupplier.get(new SimpleLocalMemoryContext(newSimpleAggregatedMemoryContext()));
+        ExchangeClient exchangeClient = exchangeClientSupplier.get(new SimpleLocalMemoryContext(newSimpleAggregatedMemoryContext(), StatementResource.class.getSimpleName()));
         Query query = Query.create(
                 sessionContext,
                 statement,
@@ -152,7 +153,8 @@ public class StatementResource
                 blockEncodingSerde);
         queries.put(query.getQueryId(), query);
 
-        asyncQueryResults(query, OptionalLong.empty(), new Duration(1, MILLISECONDS), uriInfo, proto, asyncResponse);
+        QueryResults queryResults = query.getNextResult(OptionalLong.empty(), uriInfo, proto);
+        return toResponse(query, queryResults);
     }
 
     @GET
@@ -183,7 +185,7 @@ public class StatementResource
         Duration wait = WAIT_ORDERING.min(MAX_WAIT_TIME, maxWait);
         ListenableFuture<QueryResults> queryResultsFuture = query.waitForResults(token, uriInfo, scheme, wait);
 
-        ListenableFuture<Response> response = Futures.transform(queryResultsFuture, queryResults -> toResponse(query, queryResults));
+        ListenableFuture<Response> response = Futures.transform(queryResultsFuture, queryResults -> toResponse(query, queryResults), directExecutor());
 
         bindAsyncResponse(asyncResponse, response, responseExecutor);
     }
@@ -192,9 +194,9 @@ public class StatementResource
     {
         ResponseBuilder response = Response.ok(queryResults);
 
-        // add set catalog and schema
         query.getSetCatalog().ifPresent(catalog -> response.header(PRESTO_SET_CATALOG, catalog));
         query.getSetSchema().ifPresent(schema -> response.header(PRESTO_SET_SCHEMA, schema));
+        query.getSetPath().ifPresent(path -> response.header(PRESTO_SET_PATH, path));
 
         // add set session properties
         query.getSetSessionProperties().entrySet()

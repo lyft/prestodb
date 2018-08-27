@@ -27,6 +27,7 @@ import io.airlift.http.client.HttpUriBuilder;
 import io.airlift.http.client.Request;
 import io.airlift.http.client.StatusResponseHandler;
 import io.airlift.http.client.jetty.JettyHttpClient;
+import io.airlift.json.JsonCodec;
 import io.airlift.testing.Closeables;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
@@ -35,11 +36,12 @@ import org.testng.annotations.Test;
 import java.net.URI;
 import java.util.List;
 
-import static com.facebook.presto.SystemSessionProperties.DISTRIBUTED_JOIN;
 import static com.facebook.presto.SystemSessionProperties.HASH_PARTITION_COUNT;
+import static com.facebook.presto.SystemSessionProperties.JOIN_DISTRIBUTION_TYPE;
 import static com.facebook.presto.SystemSessionProperties.QUERY_MAX_MEMORY;
 import static com.facebook.presto.client.PrestoHeaders.PRESTO_CATALOG;
 import static com.facebook.presto.client.PrestoHeaders.PRESTO_CLIENT_INFO;
+import static com.facebook.presto.client.PrestoHeaders.PRESTO_PATH;
 import static com.facebook.presto.client.PrestoHeaders.PRESTO_PREPARED_STATEMENT;
 import static com.facebook.presto.client.PrestoHeaders.PRESTO_SCHEMA;
 import static com.facebook.presto.client.PrestoHeaders.PRESTO_SESSION;
@@ -65,6 +67,7 @@ import static org.testng.Assert.assertNull;
 @Test(singleThreaded = true)
 public class TestServer
 {
+    private static final JsonCodec<QueryResults> QUERY_RESULTS_CODEC = jsonCodec(QueryResults.class);
     private TestingPrestoServer server;
     private HttpClient client;
 
@@ -94,10 +97,14 @@ public class TestServer
                 .setHeader(PRESTO_SOURCE, "source")
                 .setHeader(PRESTO_CATALOG, "catalog")
                 .setHeader(PRESTO_SCHEMA, "schema")
+                .setHeader(PRESTO_PATH, "path")
                 .setHeader(PRESTO_TIME_ZONE, invalidTimeZone)
                 .build();
 
-        QueryResults queryResults = client.execute(request, createJsonResponseHandler(jsonCodec(QueryResults.class)));
+        QueryResults queryResults = client.execute(request, createJsonResponseHandler(QUERY_RESULTS_CODEC));
+        while (queryResults.getNextUri() != null) {
+            queryResults = client.execute(prepareGet().setUri(queryResults.getNextUri()).build(), createJsonResponseHandler(QUERY_RESULTS_CODEC));
+        }
         QueryError queryError = queryResults.getError();
         assertNotNull(queryError);
 
@@ -129,13 +136,24 @@ public class TestServer
                 .setHeader(PRESTO_SOURCE, "source")
                 .setHeader(PRESTO_CATALOG, "catalog")
                 .setHeader(PRESTO_SCHEMA, "schema")
+                .setHeader(PRESTO_PATH, "path")
                 .setHeader(PRESTO_CLIENT_INFO, "{\"clientVersion\":\"testVersion\"}")
                 .addHeader(PRESTO_SESSION, QUERY_MAX_MEMORY + "=1GB")
-                .addHeader(PRESTO_SESSION, DISTRIBUTED_JOIN + "=true," + HASH_PARTITION_COUNT + " = 43")
+                .addHeader(PRESTO_SESSION, JOIN_DISTRIBUTION_TYPE + "=partitioned," + HASH_PARTITION_COUNT + " = 43")
                 .addHeader(PRESTO_PREPARED_STATEMENT, "foo=select * from bar")
                 .build();
 
-        QueryResults queryResults = client.execute(request, createJsonResponseHandler(jsonCodec(QueryResults.class)));
+        QueryResults queryResults = client.execute(request, createJsonResponseHandler(QUERY_RESULTS_CODEC));
+
+        ImmutableList.Builder<List<Object>> data = ImmutableList.builder();
+        while (queryResults.getNextUri() != null) {
+            queryResults = client.execute(prepareGet().setUri(queryResults.getNextUri()).build(), createJsonResponseHandler(QUERY_RESULTS_CODEC));
+
+            if (queryResults.getData() != null) {
+                data.addAll(queryResults.getData());
+            }
+        }
+        assertNull(queryResults.getError());
 
         // get the query info
         QueryInfo queryInfo = server.getQueryManager().getQueryInfo(new QueryId(queryResults.getId()));
@@ -143,7 +161,7 @@ public class TestServer
         // verify session properties
         assertEquals(queryInfo.getSession().getSystemProperties(), ImmutableMap.builder()
                 .put(QUERY_MAX_MEMORY, "1GB")
-                .put(DISTRIBUTED_JOIN, "true")
+                .put(JOIN_DISTRIBUTION_TYPE, "partitioned")
                 .put(HASH_PARTITION_COUNT, "43")
                 .build());
 
@@ -154,20 +172,6 @@ public class TestServer
         assertEquals(queryInfo.getSession().getPreparedStatements(), ImmutableMap.builder()
                 .put("foo", "select * from bar")
                 .build());
-
-        ImmutableList.Builder<List<Object>> data = ImmutableList.builder();
-        if (queryResults.getData() != null) {
-            data.addAll(queryResults.getData());
-        }
-
-        while (queryResults.getNextUri() != null) {
-            queryResults = client.execute(prepareGet().setUri(queryResults.getNextUri()).build(), createJsonResponseHandler(jsonCodec(QueryResults.class)));
-
-            if (queryResults.getData() != null) {
-                data.addAll(queryResults.getData());
-            }
-        }
-        assertNull(queryResults.getError());
 
         // only the system catalog exists by default
         List<List<Object>> rows = data.build();
@@ -185,7 +189,7 @@ public class TestServer
                 .setHeader(PRESTO_TRANSACTION_ID, "none")
                 .build();
 
-        JsonResponse<QueryResults> queryResults = client.execute(request, createFullJsonResponseHandler(jsonCodec(QueryResults.class)));
+        JsonResponse<QueryResults> queryResults = client.execute(request, createFullJsonResponseHandler(QUERY_RESULTS_CODEC));
         ImmutableList.Builder<List<Object>> data = ImmutableList.builder();
         while (true) {
             if (queryResults.getValue().getData() != null) {
@@ -195,7 +199,7 @@ public class TestServer
             if (queryResults.getValue().getNextUri() == null) {
                 break;
             }
-            queryResults = client.execute(prepareGet().setUri(queryResults.getValue().getNextUri()).build(), createFullJsonResponseHandler(jsonCodec(QueryResults.class)));
+            queryResults = client.execute(prepareGet().setUri(queryResults.getValue().getNextUri()).build(), createFullJsonResponseHandler(QUERY_RESULTS_CODEC));
         }
         assertNull(queryResults.getValue().getError());
         assertNotNull(queryResults.getHeader(PRESTO_STARTED_TRANSACTION_ID));
@@ -211,9 +215,9 @@ public class TestServer
                 .setHeader(PRESTO_SOURCE, "source")
                 .build();
 
-        QueryResults queryResults = client.execute(request, createJsonResponseHandler(jsonCodec(QueryResults.class)));
+        QueryResults queryResults = client.execute(request, createJsonResponseHandler(QUERY_RESULTS_CODEC));
         while (queryResults.getNextUri() != null) {
-            queryResults = client.execute(prepareGet().setUri(queryResults.getNextUri()).build(), createJsonResponseHandler(jsonCodec(QueryResults.class)));
+            queryResults = client.execute(prepareGet().setUri(queryResults.getNextUri()).build(), createJsonResponseHandler(QUERY_RESULTS_CODEC));
         }
 
         assertNotNull(queryResults.getError());

@@ -74,9 +74,9 @@ import static java.util.Objects.requireNonNull;
 public class PrestoResultSet
         implements ResultSet
 {
-    private static final DateTimeFormatter DATE_FORMATTER = ISODateTimeFormat.date();
-    private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormat.forPattern("HH:mm:ss.SSS");
-    private static final DateTimeFormatter TIME_WITH_TIME_ZONE_FORMATTER = new DateTimeFormatterBuilder()
+    static final DateTimeFormatter DATE_FORMATTER = ISODateTimeFormat.date();
+    static final DateTimeFormatter TIME_FORMATTER = DateTimeFormat.forPattern("HH:mm:ss.SSS");
+    static final DateTimeFormatter TIME_WITH_TIME_ZONE_FORMATTER = new DateTimeFormatterBuilder()
             .append(DateTimeFormat.forPattern("HH:mm:ss.SSS ZZZ").getPrinter(),
                     new DateTimeParser[] {
                             DateTimeFormat.forPattern("HH:mm:ss.SSS Z").getParser(),
@@ -85,8 +85,8 @@ public class PrestoResultSet
             .toFormatter()
             .withOffsetParsed();
 
-    private static final DateTimeFormatter TIMESTAMP_FORMATTER = DateTimeFormat.forPattern("yyyy-MM-dd HH:mm:ss.SSS");
-    private static final DateTimeFormatter TIMESTAMP_WITH_TIME_ZONE_FORMATTER = new DateTimeFormatterBuilder()
+    static final DateTimeFormatter TIMESTAMP_FORMATTER = DateTimeFormat.forPattern("yyyy-MM-dd HH:mm:ss.SSS");
+    static final DateTimeFormatter TIMESTAMP_WITH_TIME_ZONE_FORMATTER = new DateTimeFormatterBuilder()
             .append(DateTimeFormat.forPattern("yyyy-MM-dd HH:mm:ss.SSS ZZZ").getPrinter(),
                     new DateTimeParser[] {
                             DateTimeFormat.forPattern("yyyy-MM-dd HH:mm:ss.SSS Z").getParser(),
@@ -1643,6 +1643,11 @@ public class PrestoResultSet
         return iface.isInstance(this);
     }
 
+    void partialCancel()
+    {
+        client.cancelLeafStage();
+    }
+
     private void checkOpen()
             throws SQLException
     {
@@ -1764,15 +1769,20 @@ public class PrestoResultSet
         protected Iterable<List<Object>> computeNext()
         {
             while (client.isRunning()) {
-                if (Thread.currentThread().isInterrupted()) {
-                    client.close();
-                    throw new RuntimeException(new SQLException("ResultSet thread was interrupted"));
-                }
+                checkInterruption(null);
 
                 QueryStatusInfo results = client.currentStatusInfo();
                 progressCallback.accept(QueryStats.create(results.getId(), results.getStats()));
                 Iterable<List<Object>> data = client.currentData().getData();
-                client.advance();
+
+                try {
+                    client.advance();
+                }
+                catch (RuntimeException e) {
+                    checkInterruption(e);
+                    throw e;
+                }
+
                 if (data != null) {
                     return data;
                 }
@@ -1787,6 +1797,14 @@ public class PrestoResultSet
             }
 
             return endOfData();
+        }
+
+        private void checkInterruption(Throwable t)
+        {
+            if (Thread.currentThread().isInterrupted()) {
+                client.close();
+                throw new RuntimeException(new SQLException("ResultSet thread was interrupted", t));
+            }
         }
     }
 

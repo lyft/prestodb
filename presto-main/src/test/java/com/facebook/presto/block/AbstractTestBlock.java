@@ -33,6 +33,7 @@ import org.testng.annotations.Test;
 import java.lang.invoke.MethodHandle;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
@@ -49,6 +50,8 @@ import static java.lang.Math.toIntExact;
 import static java.lang.String.format;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
+import static org.testng.Assert.assertNotSame;
+import static org.testng.Assert.assertSame;
 import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
 
@@ -96,6 +99,9 @@ public abstract class AbstractTestBlock
         Field[] fields = block.getClass().getDeclaredFields();
         try {
             for (Field field : fields) {
+                if (Modifier.isStatic(field.getModifiers())) {
+                    continue;
+                }
                 Class<?> type = field.getType();
                 if (type.isPrimitive()) {
                     continue;
@@ -104,7 +110,10 @@ public abstract class AbstractTestBlock
                 field.setAccessible(true);
 
                 if (type == Slice.class) {
-                    retainedSize += ((Slice) field.get(block)).getRetainedSize();
+                    Slice slice = (Slice) field.get(block);
+                    if (slice != null) {
+                        retainedSize += slice.getRetainedSize();
+                    }
                 }
                 else if (type == BlockBuilderStatus.class) {
                     if (field.get(block) != null) {
@@ -457,5 +466,51 @@ public abstract class AbstractTestBlock
             expectedValues[position] = Slices.copyOf(createExpectedValue(position));
         }
         return expectedValues;
+    }
+
+    protected static void assertEstimatedDataSizeForStats(BlockBuilder blockBuilder, Slice[] expectedSliceValues)
+    {
+        Block block = blockBuilder.build();
+        assertEquals(block.getPositionCount(), expectedSliceValues.length);
+        for (int i = 0; i < block.getPositionCount(); i++) {
+            int expectedSize = expectedSliceValues[i] == null ? 0 : expectedSliceValues[i].length();
+            assertEquals(blockBuilder.getEstimatedDataSizeForStats(i), expectedSize);
+            assertEquals(block.getEstimatedDataSizeForStats(i), expectedSize);
+        }
+
+        BlockBuilder nullValueBlockBuilder = blockBuilder.newBlockBuilderLike(null).appendNull();
+        assertEquals(nullValueBlockBuilder.getEstimatedDataSizeForStats(0), 0);
+        assertEquals(nullValueBlockBuilder.build().getEstimatedDataSizeForStats(0), 0);
+    }
+
+    protected static void testCopyRegionCompactness(Block block)
+    {
+        assertCompact(block.copyRegion(0, block.getPositionCount()));
+        if (block.getPositionCount() > 0) {
+            assertCompact(block.copyRegion(0, block.getPositionCount() - 1));
+            assertCompact(block.copyRegion(1, block.getPositionCount() - 1));
+        }
+    }
+
+    protected static void assertCompact(Block block)
+    {
+        assertSame(block.copyRegion(0, block.getPositionCount()), block);
+    }
+
+    protected static void assertNotCompact(Block block)
+    {
+        assertNotSame(block.copyRegion(0, block.getPositionCount()), block);
+    }
+
+    protected static void testCompactBlock(Block block)
+    {
+        assertCompact(block);
+        testCopyRegionCompactness(block);
+    }
+
+    protected static void testIncompactBlock(Block block)
+    {
+        assertNotCompact(block);
+        testCopyRegionCompactness(block);
     }
 }

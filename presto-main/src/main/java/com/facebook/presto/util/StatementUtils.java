@@ -40,13 +40,13 @@ import com.facebook.presto.sql.tree.RenameTable;
 import com.facebook.presto.sql.tree.ResetSession;
 import com.facebook.presto.sql.tree.Revoke;
 import com.facebook.presto.sql.tree.Rollback;
+import com.facebook.presto.sql.tree.SetPath;
 import com.facebook.presto.sql.tree.SetSession;
 import com.facebook.presto.sql.tree.ShowCatalogs;
 import com.facebook.presto.sql.tree.ShowColumns;
 import com.facebook.presto.sql.tree.ShowCreate;
 import com.facebook.presto.sql.tree.ShowFunctions;
 import com.facebook.presto.sql.tree.ShowGrants;
-import com.facebook.presto.sql.tree.ShowPartitions;
 import com.facebook.presto.sql.tree.ShowSchemas;
 import com.facebook.presto.sql.tree.ShowSession;
 import com.facebook.presto.sql.tree.ShowStats;
@@ -80,7 +80,6 @@ public class StatementUtils
         builder.put(ShowCreate.class, QueryType.DESCRIBE);
         builder.put(ShowFunctions.class, QueryType.DESCRIBE);
         builder.put(ShowGrants.class, QueryType.DESCRIBE);
-        builder.put(ShowPartitions.class, QueryType.DESCRIBE);
         builder.put(ShowSchemas.class, QueryType.DESCRIBE);
         builder.put(ShowSession.class, QueryType.DESCRIBE);
         builder.put(ShowStats.class, QueryType.DESCRIBE);
@@ -111,6 +110,7 @@ public class StatementUtils
         builder.put(Revoke.class, QueryType.DATA_DEFINITION);
         builder.put(Prepare.class, QueryType.DATA_DEFINITION);
         builder.put(Deallocate.class, QueryType.DATA_DEFINITION);
+        builder.put(SetPath.class, QueryType.DATA_DEFINITION);
         STATEMENT_QUERY_TYPES = builder.build();
     }
 

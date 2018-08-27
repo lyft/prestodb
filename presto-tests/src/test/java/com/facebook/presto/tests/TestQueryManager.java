@@ -51,6 +51,7 @@ public class TestQueryManager
     public void tearDown()
     {
         queryRunner.close();
+        queryRunner = null;
     }
 
     @Test(timeOut = 60_000L)
@@ -58,8 +59,12 @@ public class TestQueryManager
             throws Exception
     {
         QueryManager queryManager = queryRunner.getCoordinator().getQueryManager();
-        QueryId queryId = queryManager.createQuery(new TestingSessionContext(TEST_SESSION),
-                "SELECT * FROM lineitem").getQueryId();
+        QueryId queryId = queryManager.createQueryId();
+        queryManager.createQuery(
+                queryId,
+                new TestingSessionContext(TEST_SESSION),
+                "SELECT * FROM lineitem")
+                .get();
 
         // wait until query starts running
         while (true) {
