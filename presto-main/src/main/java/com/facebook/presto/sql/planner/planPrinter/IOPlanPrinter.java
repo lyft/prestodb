@@ -20,12 +20,27 @@ import com.facebook.presto.metadata.TableMetadata;
 import com.facebook.presto.spi.CatalogSchemaTableName;
 import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ColumnMetadata;
+import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.predicate.Domain;
 import com.facebook.presto.spi.predicate.Marker;
 import com.facebook.presto.spi.predicate.Marker.Bound;
 import com.facebook.presto.spi.predicate.TupleDomain;
+import com.facebook.presto.spi.type.BigintType;
+import com.facebook.presto.spi.type.BooleanType;
+import com.facebook.presto.spi.type.CharType;
+import com.facebook.presto.spi.type.DateType;
+import com.facebook.presto.spi.type.DecimalType;
+import com.facebook.presto.spi.type.DoubleType;
+import com.facebook.presto.spi.type.IntegerType;
+import com.facebook.presto.spi.type.SmallintType;
+import com.facebook.presto.spi.type.TimeType;
+import com.facebook.presto.spi.type.TimeWithTimeZoneType;
+import com.facebook.presto.spi.type.TimestampType;
+import com.facebook.presto.spi.type.TimestampWithTimeZoneType;
+import com.facebook.presto.spi.type.TinyintType;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.spi.type.TypeSignature;
+import com.facebook.presto.spi.type.VarcharType;
 import com.facebook.presto.sql.planner.plan.PlanNode;
 import com.facebook.presto.sql.planner.plan.PlanVisitor;
 import com.facebook.presto.sql.planner.plan.TableFinishNode;
@@ -37,6 +52,9 @@ import com.facebook.presto.sql.planner.plan.TableWriterNode.InsertHandle;
 import com.facebook.presto.sql.planner.plan.TableWriterNode.InsertReference;
 import com.facebook.presto.sql.planner.plan.TableWriterNode.WriterTarget;
 import com.facebook.presto.sql.planner.planPrinter.IOPlanPrinter.IOPlan.IOPlanBuilder;
+import com.facebook.presto.type.IntervalDayTimeType;
+import com.facebook.presto.type.IntervalYearMonthType;
+import com.facebook.presto.type.IpAddressType;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.collect.ImmutableSet;
@@ -47,6 +65,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
+import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
 import static com.facebook.presto.spi.predicate.Marker.Bound.EXACTLY;
 import static com.google.common.base.MoreObjects.toStringHelper;
 import static com.google.common.base.Preconditions.checkArgument;
@@ -57,6 +76,11 @@ import static java.util.Objects.requireNonNull;
 
 public class IOPlanPrinter
 {
+    private static final Set<Class> WHITELISTED_TYPES_FOR_OUTPUT = ImmutableSet.of(
+            VarcharType.class, TinyintType.class, SmallintType.class, IntegerType.class, BigintType.class,
+            BooleanType.class, CharType.class, DateType.class, DecimalType.class, DoubleType.class,
+            IntervalDayTimeType.class, IntervalYearMonthType.class, IpAddressType.class,
+            TimeType.class, TimeWithTimeZoneType.class, TimestampType.class, TimestampWithTimeZoneType.class);
     private final Metadata metadata;
     private final Session session;
 
@@ -552,7 +576,12 @@ public class IOPlanPrinter
 
         private String getVarcharValue(Type type, Object value)
         {
-            return PlanPrinterUtil.castToVarchar(type, value, metadata.getFunctionRegistry(), session);
+            for (Class<Type> whitelistedType : WHITELISTED_TYPES_FOR_OUTPUT) {
+                if (whitelistedType.getClass().isInstance(type.getClass())) {
+                    return PlanPrinterUtil.castToVarchar(type, value, metadata.getFunctionRegistry(), session);
+                }
+            }
+            throw new PrestoException(NOT_SUPPORTED, format("Unsupported data type in EXPLAIN (TYPE IO): %s", type.getDisplayName()));
         }
 
         private Void processChildren(PlanNode node, IOPlanBuilder context)
