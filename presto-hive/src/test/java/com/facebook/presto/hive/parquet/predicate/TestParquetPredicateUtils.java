@@ -32,7 +32,6 @@ import parquet.column.Encoding;
 import parquet.schema.GroupType;
 import parquet.schema.MessageType;
 import parquet.schema.PrimitiveType;
-import parquet.schema.Type;
 
 import java.util.List;
 import java.util.Map;
@@ -41,7 +40,6 @@ import java.util.Set;
 
 import static com.facebook.presto.hive.HiveColumnHandle.ColumnType.REGULAR;
 import static com.facebook.presto.hive.parquet.ParquetTypeUtils.getDescriptors;
-import static com.facebook.presto.hive.parquet.ParquetTypeUtils.getParquetType;
 import static com.facebook.presto.hive.parquet.predicate.ParquetPredicateUtils.getParquetTupleDomain;
 import static com.facebook.presto.hive.parquet.predicate.ParquetPredicateUtils.isOnlyDictionaryEncodingPages;
 import static com.facebook.presto.spi.block.MethodHandleUtil.methodHandle;
@@ -97,8 +95,8 @@ public class TestParquetPredicateUtils
         MessageType fileSchema = new MessageType("hive_schema",
                 new GroupType(OPTIONAL, "my_array",
                         new GroupType(REPEATED, "bag", new PrimitiveType(OPTIONAL, INT32, "array_element"))));
-        Map<Type, HiveColumnHandle> typeColumns = ImmutableMap.of(getParquetType(columnHandle, fileSchema, true), columnHandle);
-        Map<List<String>, RichColumnDescriptor> descriptorsByPath = getDescriptors(fileSchema, fileSchema, typeColumns);
+
+        Map<List<String>, RichColumnDescriptor> descriptorsByPath = getDescriptors(fileSchema, fileSchema);
         TupleDomain<ColumnDescriptor> tupleDomain = getParquetTupleDomain(descriptorsByPath, domain);
         assertTrue(tupleDomain.getDomains().get().isEmpty());
     }
@@ -115,8 +113,8 @@ public class TestParquetPredicateUtils
                 new GroupType(OPTIONAL, "my_array_struct",
                         new GroupType(REPEATED, "bag",
                                 new GroupType(OPTIONAL, "array_element", new PrimitiveType(OPTIONAL, INT32, "a")))));
-        Map<Type, HiveColumnHandle> typeColumns = ImmutableMap.of(getParquetType(columnHandle, fileSchema, true), columnHandle);
-        Map<List<String>, RichColumnDescriptor> descriptorsByPath = getDescriptors(fileSchema, fileSchema, typeColumns);
+
+        Map<List<String>, RichColumnDescriptor> descriptorsByPath = getDescriptors(fileSchema, fileSchema);
         TupleDomain<ColumnDescriptor> tupleDomain = getParquetTupleDomain(descriptorsByPath, domain);
         assertTrue(tupleDomain.getDomains().get().isEmpty());
     }
@@ -129,8 +127,8 @@ public class TestParquetPredicateUtils
         TupleDomain<HiveColumnHandle> domain = withColumnDomains(ImmutableMap.of(columnHandle, singleValueDomain));
 
         MessageType fileSchema = new MessageType("hive_schema", new PrimitiveType(OPTIONAL, INT64, "my_primitive"));
-        Map<Type, HiveColumnHandle> typeColumns = ImmutableMap.of(getParquetType(columnHandle, fileSchema, true), columnHandle);
-        Map<List<String>, RichColumnDescriptor> descriptorsByPath = getDescriptors(fileSchema, fileSchema, typeColumns);
+
+        Map<List<String>, RichColumnDescriptor> descriptorsByPath = getDescriptors(fileSchema, fileSchema);
         TupleDomain<ColumnDescriptor> tupleDomain = getParquetTupleDomain(descriptorsByPath, domain);
 
         assertEquals(tupleDomain.getDomains().get().size(), 1);
@@ -154,8 +152,7 @@ public class TestParquetPredicateUtils
                 new GroupType(OPTIONAL, "my_struct",
                         new PrimitiveType(OPTIONAL, INT32, "a"),
                         new PrimitiveType(OPTIONAL, INT32, "b")));
-        Map<Type, HiveColumnHandle> typeColumns = ImmutableMap.of(getParquetType(columnHandle, fileSchema, true), columnHandle);
-        Map<List<String>, RichColumnDescriptor> descriptorsByPath = getDescriptors(fileSchema, fileSchema, typeColumns);
+        Map<List<String>, RichColumnDescriptor> descriptorsByPath = getDescriptors(fileSchema, fileSchema);
         TupleDomain<ColumnDescriptor> tupleDomain = getParquetTupleDomain(descriptorsByPath, domain);
         assertTrue(tupleDomain.getDomains().get().isEmpty());
     }
@@ -180,8 +177,8 @@ public class TestParquetPredicateUtils
                         new GroupType(REPEATED, "map",
                             new PrimitiveType(REQUIRED, INT32, "key"),
                             new PrimitiveType(OPTIONAL, INT32, "value"))));
-        Map<Type, HiveColumnHandle> typeColumns = ImmutableMap.of(getParquetType(columnHandle, fileSchema, true), columnHandle);
-        Map<List<String>, RichColumnDescriptor> descriptorsByPath = getDescriptors(fileSchema, fileSchema, typeColumns);
+
+        Map<List<String>, RichColumnDescriptor> descriptorsByPath = getDescriptors(fileSchema, fileSchema);
         TupleDomain<ColumnDescriptor> tupleDomain = getParquetTupleDomain(descriptorsByPath, domain);
         assertTrue(tupleDomain.getDomains().get().isEmpty());
     }

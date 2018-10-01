@@ -13,36 +13,25 @@
  */
 package com.facebook.presto.hive.parquet;
 
-import com.facebook.presto.hive.HiveType;
 import parquet.column.ColumnDescriptor;
 import parquet.schema.PrimitiveType;
 
-import javax.annotation.concurrent.Immutable;
-
-import java.util.Optional;
-
-import static java.util.Objects.requireNonNull;
 import static parquet.schema.Type.Repetition.OPTIONAL;
 
-// RichColumnDescriptor extends ColumnDescriptor and exposes the PrimitiveType and HiveType information.
-@Immutable
+// extension of parquet's ColumnDescriptor. Exposes full Primitive type information
 public class RichColumnDescriptor
         extends ColumnDescriptor
 {
     private final PrimitiveType primitiveType;
     private final boolean required;
 
-    private final Optional<HiveType> hiveType;
-
     public RichColumnDescriptor(
             ColumnDescriptor descriptor,
-            PrimitiveType primitiveType,
-            Optional<HiveType> hiveType)
+            PrimitiveType primitiveType)
     {
         super(descriptor.getPath(), primitiveType.getPrimitiveTypeName(), primitiveType.getTypeLength(), descriptor.getMaxRepetitionLevel(), descriptor.getMaxDefinitionLevel());
         this.primitiveType = primitiveType;
         this.required = primitiveType.getRepetition() != OPTIONAL;
-        this.hiveType = requireNonNull(hiveType, "hiveType is null");
     }
 
     public PrimitiveType getPrimitiveType()
@@ -53,10 +42,5 @@ public class RichColumnDescriptor
     public boolean isRequired()
     {
         return required;
-    }
-
-    public Optional<HiveType> getHiveType()
-    {
-        return hiveType;
     }
 }

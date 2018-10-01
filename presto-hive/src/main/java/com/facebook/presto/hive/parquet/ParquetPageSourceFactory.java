@@ -26,7 +26,6 @@ import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.predicate.TupleDomain;
 import com.facebook.presto.spi.type.TypeManager;
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
@@ -39,16 +38,15 @@ import parquet.hadoop.metadata.FileMetaData;
 import parquet.hadoop.metadata.ParquetMetadata;
 import parquet.io.MessageColumnIO;
 import parquet.schema.MessageType;
-import parquet.schema.Type;
 
 import javax.inject.Inject;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
@@ -158,14 +156,13 @@ public class ParquetPageSourceFactory
             MessageType fileSchema = fileMetaData.getSchema();
             dataSource = buildHdfsParquetDataSource(inputStream, path, fileSize, stats);
 
-            Map<Type, HiveColumnHandle> typeColumns = new HashMap<>();
-            for (HiveColumnHandle column : columns) {
-                if (column.getColumnType() == REGULAR) {
-                    typeColumns.put(getParquetType(column, fileSchema, useParquetColumnNames), column);
-                }
-            }
+            List<parquet.schema.Type> fields = columns.stream()
+                    .filter(column -> column.getColumnType() == REGULAR)
+                    .map(column -> getParquetType(column, fileSchema, useParquetColumnNames))
+                    .filter(Objects::nonNull)
+                    .collect(toList());
 
-            MessageType requestedSchema = new MessageType(fileSchema.getName(), ImmutableList.copyOf(typeColumns.keySet()));
+            MessageType requestedSchema = new MessageType(fileSchema.getName(), fields);
 
             List<BlockMetaData> blocks = new ArrayList<>();
             for (BlockMetaData block : parquetMetadata.getBlocks()) {
@@ -176,7 +173,7 @@ public class ParquetPageSourceFactory
             }
 
             if (predicatePushdownEnabled) {
-                Map<List<String>, RichColumnDescriptor> descriptorsByPath = getDescriptors(fileSchema, requestedSchema, typeColumns);
+                Map<List<String>, RichColumnDescriptor> descriptorsByPath = getDescriptors(fileSchema, requestedSchema);
                 TupleDomain<ColumnDescriptor> parquetTupleDomain = getParquetTupleDomain(descriptorsByPath, effectivePredicate);
                 ParquetPredicate parquetPredicate = buildParquetPredicate(requestedSchema, parquetTupleDomain, descriptorsByPath);
                 final ParquetDataSource finalDataSource = dataSource;
