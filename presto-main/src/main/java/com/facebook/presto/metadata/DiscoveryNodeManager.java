@@ -228,12 +228,6 @@ public final class DiscoveryNodeManager
                 PrestoNode node = new PrestoNode(service.getNodeId(), uri, nodeVersion, coordinator);
                 NodeState nodeState = getNodeState(node);
 
-                // record current node
-                if (node.getNodeIdentifier().equals(nodeInfo.getNodeId())) {
-                    currentNode = node;
-                    checkState(currentNode.getNodeVersion().equals(expectedNodeVersion), "INVARIANT: current node version (%s) should be equal to %s", currentNode.getNodeVersion(), expectedNodeVersion);
-                }
-
                 if (shrinkMap != null) {
                     ShrinkNodeInfo sni = shrinkMap.get(node.getNodeIdentifier());
                     if (sni != null && System.currentTimeMillis() - sni.shrinkTime > 120000L && nodeState == ACTIVE) {
