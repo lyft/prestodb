@@ -584,6 +584,9 @@ public class IOPlanPrinter
                     return PlanPrinterUtil.castToVarchar(type, value, metadata.getFunctionRegistry(), session);
                 }
             }
+            if (type instanceof BooleanType) {
+                return ((Boolean) value).toString();
+            }
             throw new PrestoException(NOT_SUPPORTED, format("Unsupported data type in EXPLAIN (TYPE IO): %s", type.getDisplayName()));
         }
 

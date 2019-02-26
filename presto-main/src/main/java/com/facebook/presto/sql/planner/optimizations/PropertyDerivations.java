@@ -59,6 +59,7 @@ import com.facebook.presto.sql.planner.plan.SampleNode;
 import com.facebook.presto.sql.planner.plan.SemiJoinNode;
 import com.facebook.presto.sql.planner.plan.SortNode;
 import com.facebook.presto.sql.planner.plan.SpatialJoinNode;
+import com.facebook.presto.sql.planner.plan.StatisticsWriterNode;
 import com.facebook.presto.sql.planner.plan.TableFinishNode;
 import com.facebook.presto.sql.planner.plan.TableScanNode;
 import com.facebook.presto.sql.planner.plan.TableWriterNode;
@@ -361,6 +362,14 @@ public class PropertyDerivations
 
             return ActualProperties.builderFrom(properties)
                     .local(LocalProperties.grouped(node.getDistinctSymbols()))
+                    .build();
+        }
+
+        @Override
+        public ActualProperties visitStatisticsWriterNode(StatisticsWriterNode node, List<ActualProperties> context)
+        {
+            return ActualProperties.builder()
+                    .global(coordinatorSingleStreamPartition())
                     .build();
         }
 
