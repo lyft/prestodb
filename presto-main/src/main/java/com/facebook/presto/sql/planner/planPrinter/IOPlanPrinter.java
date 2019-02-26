@@ -27,8 +27,16 @@ import com.facebook.presto.spi.predicate.Marker.Bound;
 import com.facebook.presto.spi.predicate.TupleDomain;
 import com.facebook.presto.spi.type.BigintType;
 import com.facebook.presto.spi.type.BooleanType;
+import com.facebook.presto.spi.type.CharType;
+import com.facebook.presto.spi.type.DateType;
+import com.facebook.presto.spi.type.DecimalType;
+import com.facebook.presto.spi.type.DoubleType;
 import com.facebook.presto.spi.type.IntegerType;
 import com.facebook.presto.spi.type.SmallintType;
+import com.facebook.presto.spi.type.TimeType;
+import com.facebook.presto.spi.type.TimeWithTimeZoneType;
+import com.facebook.presto.spi.type.TimestampType;
+import com.facebook.presto.spi.type.TimestampWithTimeZoneType;
 import com.facebook.presto.spi.type.TinyintType;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.spi.type.TypeSignature;
@@ -44,10 +52,12 @@ import com.facebook.presto.sql.planner.plan.TableWriterNode.InsertHandle;
 import com.facebook.presto.sql.planner.plan.TableWriterNode.InsertReference;
 import com.facebook.presto.sql.planner.plan.TableWriterNode.WriterTarget;
 import com.facebook.presto.sql.planner.planPrinter.IOPlanPrinter.IOPlan.IOPlanBuilder;
+import com.facebook.presto.type.IntervalDayTimeType;
+import com.facebook.presto.type.IntervalYearMonthType;
+import com.facebook.presto.type.IpAddressType;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.collect.ImmutableSet;
-import io.airlift.slice.Slice;
 
 import java.util.HashSet;
 import java.util.Map;
@@ -66,6 +76,11 @@ import static java.util.Objects.requireNonNull;
 
 public class IOPlanPrinter
 {
+    private static final Set<Class> WHITELISTED_TYPES_FOR_OUTPUT = ImmutableSet.of(
+            VarcharType.class, TinyintType.class, SmallintType.class, IntegerType.class, BigintType.class,
+            BooleanType.class, CharType.class, DateType.class, DecimalType.class, DoubleType.class,
+            IntervalDayTimeType.class, IntervalYearMonthType.class, IpAddressType.class,
+            TimeType.class, TimeWithTimeZoneType.class, TimestampType.class, TimestampWithTimeZoneType.class);
     private final Metadata metadata;
     private final Session session;
 
@@ -564,11 +579,10 @@ public class IOPlanPrinter
 
         private String getVarcharValue(Type type, Object value)
         {
-            if (type instanceof VarcharType) {
-                return ((Slice) value).toStringUtf8();
-            }
-            if (type instanceof TinyintType || type instanceof SmallintType || type instanceof IntegerType || type instanceof BigintType) {
-                return ((Long) value).toString();
+            for (Class<Type> whitelistedType : WHITELISTED_TYPES_FOR_OUTPUT) {
+                if (whitelistedType.getClass().isInstance(type.getClass())) {
+                    return PlanPrinterUtil.castToVarchar(type, value, metadata.getFunctionRegistry(), session);
+                }
             }
             if (type instanceof BooleanType) {
                 return ((Boolean) value).toString();
