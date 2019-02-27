@@ -99,7 +99,6 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Streams;
-import io.airlift.slice.Slice;
 import io.airlift.units.Duration;
 
 import java.util.ArrayList;
@@ -1182,22 +1181,6 @@ public class PlanPrinter
 
             representation.addNode(nodeOutput);
             return nodeOutput;
-        }
-    }
-
-    private static String castToVarchar(Type type, Object value, FunctionRegistry functionRegistry, Session session)
-    {
-        if (value == null) {
-            return "NULL";
-        }
-
-        try {
-            Signature coercion = functionRegistry.getCoercion(type, VARCHAR);
-            Slice coerced = (Slice) new InterpretedFunctionInvoker(functionRegistry).invoke(coercion, session.toConnectorSession(), value);
-            return coerced.toStringUtf8();
-        }
-        catch (OperatorNotFoundException e) {
-            return "<UNREPRESENTABLE VALUE>";
         }
     }
 
