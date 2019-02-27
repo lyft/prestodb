@@ -28,8 +28,6 @@ import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.SchemaTableName;
 import com.facebook.presto.spi.TableNotFoundException;
-import com.facebook.presto.spi.type.CharType;
-import com.facebook.presto.spi.type.Decimals;
 import com.facebook.presto.spi.type.VarcharType;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
@@ -52,14 +50,10 @@ import java.util.Set;
 import static com.facebook.presto.plugin.jdbc.DriverConnectionFactory.basicConnectionProperties;
 import static com.facebook.presto.plugin.jdbc.JdbcErrorCode.JDBC_ERROR;
 import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
-import static com.facebook.presto.spi.type.CharType.createCharType;
-import static com.facebook.presto.spi.type.DecimalType.createDecimalType;
 import static com.facebook.presto.spi.type.VarcharType.createUnboundedVarcharType;
 import static com.facebook.presto.spi.type.VarcharType.createVarcharType;
 import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
-import static java.lang.Math.max;
-import static java.lang.Math.min;
 
 public class DruidJdbcClient
         extends BaseJdbcClient
@@ -187,82 +181,28 @@ public class DruidJdbcClient
     @Override
     public Optional<ReadMapping> toPrestoType(ConnectorSession session, JdbcTypeHandle typeHandle)
     {
-        return jdbcTypeToPrestoType(typeHandle);
+        switch (typeHandle.getJdbcType()) {
+            case Types.VARCHAR:
+                return jdbcTypeToPrestoType(typeHandle);
+            default:
+                return super.toPrestoType(session, typeHandle);
+        }
     }
 
-    public static Optional<ReadMapping> jdbcTypeToPrestoType(JdbcTypeHandle type)
+    private Optional<ReadMapping> jdbcTypeToPrestoType(JdbcTypeHandle type)
     {
         int columnSize = type.getColumnSize();
-        switch (type.getJdbcType()) {
-            case Types.BIT:
-            case Types.BOOLEAN:
-                return Optional.of(StandardReadMappings.booleanReadMapping());
-
-            case Types.TINYINT:
-                return Optional.of(StandardReadMappings.tinyintReadMapping());
-
-            case Types.SMALLINT:
-                return Optional.of(StandardReadMappings.smallintReadMapping());
-
-            case Types.INTEGER:
-                return Optional.of(StandardReadMappings.integerReadMapping());
-
-            case Types.BIGINT:
-                return Optional.of(StandardReadMappings.bigintReadMapping());
-
-            case Types.REAL:
-                return Optional.of(StandardReadMappings.realReadMapping());
-
-            case Types.FLOAT:
-            case Types.DOUBLE:
-                return Optional.of(StandardReadMappings.doubleReadMapping());
-
-            case Types.NUMERIC:
-            case Types.DECIMAL:
-                int decimalDigits = type.getDecimalDigits();
-                int precision = columnSize + max(-decimalDigits, 0); // Map decimal(p, -s) (negative scale) to decimal(p+s, 0).
-                if (precision > Decimals.MAX_PRECISION) {
-                    return Optional.empty();
-                }
-                return Optional.of(StandardReadMappings.decimalReadMapping(createDecimalType(precision, max(decimalDigits, 0))));
-
-            case Types.CHAR:
-            case Types.NCHAR:
-                // TODO this is wrong, we're going to construct malformed Slice representation if source > charLength
-                int charLength = min(columnSize, CharType.MAX_LENGTH);
-                return Optional.of(StandardReadMappings.charReadMapping(createCharType(charLength)));
-
-            case Types.VARCHAR:
-            case Types.NVARCHAR:
-            case Types.LONGVARCHAR:
-            case Types.LONGNVARCHAR:
-                // TODO: This line is the reason for overriding this method. Druid Result set returning -1 columnSize.
-                if (columnSize > VarcharType.MAX_LENGTH || columnSize == -1) {
-                    return Optional.of(StandardReadMappings.varcharReadMapping(createUnboundedVarcharType()));
-                }
-                return Optional.of(StandardReadMappings.varcharReadMapping(createVarcharType(columnSize)));
-
-            case Types.BINARY:
-            case Types.VARBINARY:
-            case Types.LONGVARBINARY:
-                return Optional.of(StandardReadMappings.varbinaryReadMapping());
-
-            case Types.DATE:
-                return Optional.of(StandardReadMappings.dateReadMapping());
-
-            case Types.TIME:
-                return Optional.of(StandardReadMappings.timeReadMapping());
-
-            case Types.TIMESTAMP:
-                return Optional.of(StandardReadMappings.timestampReadMapping());
+        if (columnSize > VarcharType.MAX_LENGTH || columnSize == -1) {
+            return Optional.of(StandardReadMappings.varcharReadMapping(createUnboundedVarcharType()));
         }
-        return Optional.empty();
+        return Optional.of(StandardReadMappings.varcharReadMapping(createVarcharType(columnSize)));
     }
 
     @Override
     public List<JdbcColumnHandle> getColumns(ConnectorSession session, JdbcTableHandle tableHandle)
     {
         try (Connection connection = connectionFactory.openConnection()) {
+            // Overriding this method because of the way we retrieve columns in druid.
             try (ResultSet resultSet = getColumns(tableHandle, connection.getMetaData())) {
                 List<JdbcColumnHandle> columns = new ArrayList<>();
                 while (resultSet.next()) {
